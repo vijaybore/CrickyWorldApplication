@@ -1,0 +1,166 @@
+const express = require('express')
+const router  = express.Router()
+const jwt     = require('jsonwebtoken')
+const axios   = require('axios')
+const User    = require('../models/User')
+const auth    = require('../middleware/auth')
+
+// ─── Helper: generate 6-digit OTP ────────────────────────────────────────────
+function generateOTP() {
+  return String(Math.floor(100000 + Math.random() * 900000))
+}
+
+// ─── Helper: send OTP via Fast2SMS ───────────────────────────────────────────
+async function sendOTPviaSMS(mobile, otp) {
+  const response = await axios.get('https://www.fast2sms.com/dev/bulkV2', {
+    params: {
+      authorization: process.env.FAST2SMS_API_KEY,
+      variables_values: otp,
+      route: 'otp',
+      numbers: mobile,
+    },
+    headers: { 'cache-control': 'no-cache' },
+  })
+  return response.data
+}
+
+// ─── Helper: sign JWT ─────────────────────────────────────────────────────────
+function signToken(userId) {
+  return jwt.sign({ id: userId }, process.env.JWT_SECRET, { expiresIn: '90d' })
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// POST /api/auth/send-otp
+// Body: { mobile: "9876543210" }
+// Sends a 6-digit OTP to the given mobile number via Fast2SMS
+// ══════════════════════════════════════════════════════════════════════════════
+router.post('/send-otp', async (req, res) => {
+  try {
+    const { mobile } = req.body
+
+    // Validate 10-digit Indian mobile number
+    if (!mobile || !/^\d{10}$/.test(mobile)) {
+      return res.status(400).json({ message: 'Enter a valid 10-digit mobile number' })
+    }
+
+    // Check if user already exists
+    let user = await User.findOne({ mobile })
+    const isExisting = !!user
+
+    // Generate OTP and set expiry (10 minutes)
+    const otp       = generateOTP()
+    const expiresAt = new Date(Date.now() + 10 * 60 * 1000)
+
+    if (user) {
+      user.otp = { code: otp, expiresAt }
+      await user.save()
+    } else {
+      user = await User.create({ mobile, otp: { code: otp, expiresAt } })
+    }
+
+    // Send OTP via Fast2SMS to the user's actual mobile number
+    try {
+      await sendOTPviaSMS(mobile, otp)
+      console.log(`✅ OTP sent to +91${mobile}`)
+    } catch (smsErr) {
+      console.error('Fast2SMS error:', smsErr?.response?.data || smsErr.message)
+      // Still return success but log the error — OTP is in DB
+      // In production you might want to fail here
+    }
+
+    res.json({
+      message: 'OTP sent successfully',
+      exists:  isExisting,
+      name:    isExisting ? user.name : null,
+    })
+  } catch (err) {
+    console.error('send-otp error:', err)
+    res.status(500).json({ message: 'Server error. Please try again.' })
+  }
+})
+
+// ══════════════════════════════════════════════════════════════════════════════
+// POST /api/auth/verify-otp
+// Body: { mobile, otp, name?, deviceId? }
+// Verifies OTP, creates/updates user, returns JWT
+// ══════════════════════════════════════════════════════════════════════════════
+router.post('/verify-otp', async (req, res) => {
+  try {
+    const { mobile, otp, name, deviceId } = req.body
+
+    if (!mobile || !otp) {
+      return res.status(400).json({ message: 'Mobile and OTP are required' })
+    }
+
+    const user = await User.findOne({ mobile })
+    if (!user) {
+      return res.status(404).json({ message: 'User not found. Please request a new OTP.' })
+    }
+
+    // Check OTP
+    if (!user.otp || !user.otp.code) {
+      return res.status(400).json({ message: 'No OTP requested. Please request a new OTP.' })
+    }
+    if (user.otp.code !== String(otp)) {
+      return res.status(400).json({ message: 'Invalid OTP. Please try again.' })
+    }
+    if (new Date() > user.otp.expiresAt) {
+      return res.status(400).json({ message: 'OTP expired. Please request a new one.' })
+    }
+
+    // OTP is valid — clear it and update user
+    user.otp = undefined
+    if (name && !user.name) user.name = name.trim()
+    if (deviceId) user.deviceId = deviceId
+    await user.save()
+
+    const token = signToken(user._id)
+    res.json({ token, user: user.toSafeJSON() })
+
+  } catch (err) {
+    console.error('verify-otp error:', err)
+    res.status(500).json({ message: 'Server error. Please try again.' })
+  }
+})
+
+// ══════════════════════════════════════════════════════════════════════════════
+// POST /api/auth/device-login
+// Body: { deviceId }
+// Silent re-login for returning users — no OTP needed
+// ══════════════════════════════════════════════════════════════════════════════
+router.post('/device-login', async (req, res) => {
+  try {
+    const { deviceId } = req.body
+    if (!deviceId) {
+      return res.status(400).json({ message: 'deviceId is required' })
+    }
+
+    const user = await User.findOne({ deviceId })
+    if (!user) {
+      return res.status(404).json({ message: 'No account found for this device. Please login.' })
+    }
+
+    const token = signToken(user._id)
+    res.json({ token, user: user.toSafeJSON() })
+
+  } catch (err) {
+    console.error('device-login error:', err)
+    res.status(500).json({ message: 'Server error.' })
+  }
+})
+
+// ══════════════════════════════════════════════════════════════════════════════
+// GET /api/auth/me
+// Returns current logged-in user (validates token)
+// ══════════════════════════════════════════════════════════════════════════════
+router.get('/me', auth, async (req, res) => {
+  try {
+    const user = await User.findById(req.user.id).select('-otp')
+    if (!user) return res.status(404).json({ message: 'User not found' })
+    res.json(user.toSafeJSON())
+  } catch (err) {
+    res.status(500).json({ message: 'Server error.' })
+  }
+})
+
+module.exports = router
