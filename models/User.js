@@ -1,37 +1,14 @@
 const mongoose = require('mongoose')
-const bcrypt   = require('bcryptjs')
 
 const userSchema = new mongoose.Schema({
-  name: {
-    type: String,
-    trim: true,
-    default: '',
-  },
-  mobile: {
-    type:     String,
-    unique:   true,
-    sparse:   true,
-    trim:     true,
-  },
-  deviceId: {
-    type:   String,
-    unique: true,
-    sparse: true,
-  },
-  // OTP fields
-  otp: {
-    code:      { type: String },
-    expiresAt: { type: Date },
-  },
+  name:     { type: String, required: true, trim: true },
+  email:    { type: String, required: true, unique: true, lowercase: true, trim: true },
+  password: { type: String, required: true, select: false },
+  deviceId: { type: String, unique: true, sparse: true },
 }, { timestamps: true })
 
-// Remove sensitive fields when converting to JSON
 userSchema.methods.toSafeJSON = function () {
-  return {
-    id:     this._id,
-    name:   this.name,
-    mobile: this.mobile,
-  }
+  return { _id: this._id, name: this.name, email: this.email }
 }
 
 module.exports = mongoose.model('User', userSchema)
