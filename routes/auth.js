@@ -1,20 +1,13 @@
 // crickyworld-server/routes/auth.js
-const express    = require('express')
-const router     = express.Router()
-const jwt        = require('jsonwebtoken')
-const bcrypt     = require('bcryptjs')
-const nodemailer = require('nodemailer')
-const crypto     = require('crypto')
-const User       = require('../models/User')
+const express = require('express')
+const router  = express.Router()
+const jwt     = require('jsonwebtoken')
+const bcrypt  = require('bcryptjs')
+const crypto  = require('crypto')
+const User    = require('../models/User')
+const { Resend } = require('resend')
 
-// ── Email transporter ─────────────────────────────────────────────────────────
-const transporter = nodemailer.createTransport({
-  service: 'gmail',
-  auth: {
-    user: process.env.GMAIL_USER,
-    pass: process.env.GMAIL_PASS,
-  },
-})
+const resend = new Resend(process.env.RESEND_API_KEY)
 
 function signToken(userId) {
   return jwt.sign({ id: userId }, process.env.JWT_SECRET, { expiresIn: '90d' })
@@ -22,8 +15,8 @@ function signToken(userId) {
 
 async function sendVerificationEmail(email, name, token) {
   const verifyUrl = `${process.env.SERVER_URL}/api/auth/verify-email/${token}`
-  await transporter.sendMail({
-    from: `"CrickyWorld 🏏" <${process.env.GMAIL_USER}>`,
+  await resend.emails.send({
+    from: 'CrickyWorld <onboarding@resend.dev>',
     to: email,
     subject: 'Verify your CrickyWorld account',
     html: `
@@ -49,8 +42,8 @@ async function sendVerificationEmail(email, name, token) {
 
 async function sendResetEmail(email, name, token) {
   const resetUrl = `${process.env.SERVER_URL}/api/auth/reset-password/${token}`
-  await transporter.sendMail({
-    from: `"CrickyWorld 🏏" <${process.env.GMAIL_USER}>`,
+  await resend.emails.send({
+    from: 'CrickyWorld <onboarding@resend.dev>',
     to: email,
     subject: 'Reset your CrickyWorld password',
     html: `
@@ -155,12 +148,11 @@ router.post('/forgot-password', async (req, res) => {
     if (!email) return res.status(400).json({ message: 'Email is required' })
 
     const user = await User.findOne({ email: email.toLowerCase() })
-    // Always return success to prevent email enumeration
     if (!user) return res.json({ message: 'If this email exists, a reset link has been sent.' })
 
     const resetToken = crypto.randomBytes(32).toString('hex')
     user.resetToken       = resetToken
-    user.resetTokenExpiry = new Date(Date.now() + 60 * 60 * 1000) // 1 hour
+    user.resetTokenExpiry = new Date(Date.now() + 60 * 60 * 1000)
     await user.save()
 
     await sendResetEmail(email.toLowerCase(), user.name, resetToken)
@@ -197,7 +189,7 @@ router.get('/reset-password/:token', async (req, res) => {
         input{background:#0d0d0d;border:1.5px solid rgba(255,255,255,0.07);border-radius:13px;padding:14px 16px;color:#f0f0f0;font-size:15px;width:100%}
         button{background:#cc0000;color:#fff;border:none;border-radius:13px;padding:15px;font-size:14px;font-weight:800;cursor:pointer;width:100%}
         button:hover{background:#aa0000}
-        .msg{padding:12px;border-radius:10px;text-align:center;font-size:13px;font-weight:700}
+        .msg{padding:12px;border-radius:10px;text-align:center;font-size:13px;font-weight:700;margin-bottom:8px}
         .success{background:rgba(74,222,128,0.1);border:1px solid rgba(74,222,128,0.25);color:#4ade80}
         .error{background:rgba(248,113,113,0.1);border:1px solid rgba(248,113,113,0.25);color:#f87171}
       </style>
@@ -211,14 +203,13 @@ router.get('/reset-password/:token', async (req, res) => {
             <input type="password" id="password" placeholder="Min 6 characters" />
             <label>CONFIRM PASSWORD</label>
             <input type="password" id="confirm" placeholder="Repeat new password" />
-            <button onclick="submit()">🔐 Reset Password</button>
+            <button onclick="doReset()">🔐 Reset Password</button>
           </div>
         </div>
         <script>
-          async function submit() {
+          async function doReset() {
             const p = document.getElementById('password').value
             const c = document.getElementById('confirm').value
-            const m = document.getElementById('msg')
             if (p.length < 6) { showMsg('Password must be at least 6 characters', false); return }
             if (p !== c) { showMsg('Passwords do not match', false); return }
             const res = await fetch('/api/auth/reset-password/${req.params.token}', {
@@ -262,7 +253,7 @@ router.post('/reset-password/:token', async (req, res) => {
 
     res.json({ message: 'Password reset successfully!' })
   } catch (err) {
-    console.error('Reset password error:', err)
+    console.error('Reset error:', err)
     res.status(500).json({ message: 'Server error' })
   }
 })
