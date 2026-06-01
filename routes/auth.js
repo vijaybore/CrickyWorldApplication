@@ -61,3 +61,4 @@ async function sendResetEmail(email, name, token) {
     `
   })
 }
+module.exports = router
