@@ -1,0 +1,27 @@
+// src/types/navigation.ts
+
+export type RootStackParamList = {
+  Home: undefined
+
+  Login: undefined
+  Register: undefined
+
+   VerifyEmail: { email: string } 
+
+   ForgotPassword: undefined
+
+  NewMatch: undefined
+  OpenMatch: undefined
+
+  Scoring: { id: string }
+  MatchDetails: { id: string }
+  MatchReport: { id: string }
+
+  Players: undefined
+  ManagePlayers: undefined
+
+  Tournaments: undefined
+
+  Records: undefined
+  Settings: undefined
+}
