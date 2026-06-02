@@ -69,11 +69,13 @@ export function useLiveScores({ liveOnly = false, pollInterval = 0, matchId = nu
     try {
       const token = await AsyncStorage.getItem('token').catch(() => null)
       // Always include token — backend uses it to filter matches by this user only
-      const headers: Record<string, string> = token
-        ? { Authorization: `Bearer ${token}` }
-        : {}
-      const url = matchId ? apiUrl(`/api/matches/${matchId}`) : apiUrl('/api/matches')
-      const res = await fetch(url, { headers, signal: abortRef.current.signal })
+      const deviceId = await AsyncStorage.getItem('deviceId').catch(() => null)
+const headers: Record<string, string> = token
+  ? { Authorization: `Bearer ${token}` }
+  : {}
+const baseUrl = matchId ? apiUrl(`/api/matches/${matchId}`) : apiUrl('/api/matches')
+const url = !token && deviceId ? `${baseUrl}?deviceId=${deviceId}` : baseUrl
+const res = await fetch(url, { headers, signal: abortRef.current.signal })
       if (!res.ok) throw new Error(`Server error ${res.status}`)
       const raw = await res.json()
       if (matchId) {
