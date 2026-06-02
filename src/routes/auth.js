@@ -5,9 +5,18 @@ const jwt     = require('jsonwebtoken')
 const bcrypt  = require('bcryptjs')
 const crypto  = require('crypto')
 const User    = require('../models/User')
-const { Resend } = require('resend')
+const nodemailer = require('nodemailer')
 
-const resend = new Resend(process.env.RESEND_API_KEY)
+const transporter = nodemailer.createTransport({
+  host: 'smtp.gmail.com',
+  port: 587,
+  secure: false,
+  auth: {
+    user: process.env.GMAIL_USER,
+    pass: process.env.GMAIL_PASS,
+  },
+  family: 4,
+})
 
 function signToken(userId) {
   return jwt.sign({ id: userId }, process.env.JWT_SECRET, { expiresIn: '90d' })
@@ -15,8 +24,8 @@ function signToken(userId) {
 
 async function sendVerificationEmail(email, name, token) {
   const verifyUrl = `${process.env.SERVER_URL}/api/auth/verify-email/${token}`
-  await resend.emails.send({
-    from: 'CrickyWorld <onboarding@resend.dev>',
+  await transporter.sendMail({
+    from: `"CrickyWorld 🏏" <${process.env.GMAIL_USER}>`,
     to: email,
     subject: 'Verify your CrickyWorld account',
     html: `
@@ -36,14 +45,14 @@ async function sendVerificationEmail(email, name, token) {
           <p style="color:#555;font-size:12px;text-align:center">This link expires in 24 hours.</p>
         </div>
       </div>
-    `,
+    `
   })
 }
 
 async function sendResetEmail(email, name, token) {
   const resetUrl = `${process.env.SERVER_URL}/api/auth/reset-password/${token}`
-  await resend.emails.send({
-    from: 'CrickyWorld <onboarding@resend.dev>',
+  await transporter.sendMail({
+    from: `"CrickyWorld 🏏" <${process.env.GMAIL_USER}>`,
     to: email,
     subject: 'Reset your CrickyWorld password',
     html: `
@@ -63,7 +72,7 @@ async function sendResetEmail(email, name, token) {
           <p style="color:#555;font-size:12px;text-align:center">This link expires in 1 hour. If you didn't request this, ignore this email.</p>
         </div>
       </div>
-    `,
+    `
   })
 }
 
@@ -212,7 +221,7 @@ router.get('/reset-password/:token', async (req, res) => {
             const c = document.getElementById('confirm').value
             if (p.length < 6) { showMsg('Password must be at least 6 characters', false); return }
             if (p !== c) { showMsg('Passwords do not match', false); return }
-            const res = await fetch('/api/auth/reset-password/${req.params.token}', {
+            const res = await fetch(window.location.href, {
               method: 'POST', headers: {'Content-Type':'application/json'},
               body: JSON.stringify({ password: p })
             })
