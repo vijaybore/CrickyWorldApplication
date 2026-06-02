@@ -133,11 +133,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } catch { return false }
   }, [])
 
-  const continueAsGuest = useCallback(() => {
-    AsyncStorage.setItem('isGuest', 'true')
-    setIsGuest(true)
-    setUser({ id: 'guest', name: 'Guest' })
-  }, [])
+  const continueAsGuest = useCallback(async () => {
+  await AsyncStorage.multiRemove(['token', 'user'])
+  await AsyncStorage.setItem('isGuest', 'true')
+  setIsGuest(true)
+  setUser({ id: 'guest', name: 'Guest' })
+}, [])
 
   const logout = useCallback(async (): Promise<void> => {
     await clearAuth()
