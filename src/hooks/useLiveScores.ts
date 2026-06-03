@@ -1,11 +1,10 @@
 // src/hooks/useLiveScores.ts
-// Always sends Authorization header → backend filters GET /api/matches by createdBy (userId)
-// so each user only ever sees their own matches.
-
 import { useState, useEffect, useCallback, useRef } from 'react'
 import AsyncStorage from '@react-native-async-storage/async-storage'
 import { apiUrl } from '../services/api'
 import type { Match, Innings } from '../types'
+
+const DEVICE_ID_KEY = '@crickyworld:deviceId'
 
 interface RawInnings {
   battingTeam?: string; runs?: number; wickets?: number; balls?: number
@@ -67,15 +66,23 @@ export function useLiveScores({ liveOnly = false, pollInterval = 0, matchId = nu
     if (!silent) setLoading(true)
     setError(null)
     try {
-      const token = await AsyncStorage.getItem('token').catch(() => null)
-      // Always include token — backend uses it to filter matches by this user only
-      const deviceId = await AsyncStorage.getItem('deviceId').catch(() => null)
-const headers: Record<string, string> = token
-  ? { Authorization: `Bearer ${token}` }
-  : {}
-const baseUrl = matchId ? apiUrl(`/api/matches/${matchId}`) : apiUrl('/api/matches')
-const url = !token && deviceId ? `${baseUrl}?deviceId=${deviceId}` : baseUrl
-const res = await fetch(url, { headers, signal: abortRef.current.signal })
+      const token    = await AsyncStorage.getItem('token').catch(() => null)
+      const deviceId = await AsyncStorage.getItem(DEVICE_ID_KEY).catch(() => null)
+
+      const headers: Record<string, string> = token
+        ? { Authorization: `Bearer ${token}` }
+        : {}
+
+      let url: string
+      if (matchId) {
+        const base = apiUrl(`/api/matches/${matchId}`)
+        url = !token && deviceId ? `${base}?deviceId=${deviceId}` : base
+      } else {
+        const base = apiUrl('/api/matches')
+        url = !token && deviceId ? `${base}?deviceId=${deviceId}` : base
+      }
+
+      const res = await fetch(url, { headers, signal: abortRef.current.signal })
       if (!res.ok) throw new Error(`Server error ${res.status}`)
       const raw = await res.json()
       if (matchId) {
