@@ -484,10 +484,11 @@ function MatchSetupView({ t, f, dispatch }: { t: any; f: any; dispatch: (a: any)
 
   const parse = (s: string) => s.split(',').map(x=>x.trim()).filter(Boolean)
 
-  const handleStart = async () => {
+ const handleStart = async () => {
     setLoading(true); setError('')
     try {
       const token = await getToken()
+      const deviceId = await AsyncStorage.getItem('@crickyworld:deviceId').catch(() => null)
       const ovNum = parseInt(overs) || 10
       const res = await fetch(apiUrl('/api/matches'), {
         method: 'POST', headers: jsonHeaders(token),
@@ -497,6 +498,7 @@ function MatchSetupView({ t, f, dispatch }: { t: any; f: any; dispatch: (a: any)
           wideRuns: t.wideRuns ?? 1, noBallRuns: t.noBallRuns ?? 1,
           team1Players: parse(t1p), team2Players: parse(t2p),
           tournamentId: t.id, tournamentName: t.name, fixtureId: f.id,
+          deviceId,
         }),
       })
       if (!res.ok) throw new Error('Failed to create match')
