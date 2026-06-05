@@ -565,14 +565,16 @@ export default function ScoringScreen() {
   const fetchMatch = useCallback(async () => {
     try {
       const token = await getToken()
-      const res = await fetch(apiUrl(`/api/matches/${id}`), { headers: authHeaders(token) })
+      const deviceId = await AsyncStorage.getItem('@crickyworld:deviceId').catch(() => null)
+      const baseUrl = apiUrl(`/api/matches/${id}`)
+      const url = !token && deviceId ? `${baseUrl}?deviceId=${deviceId}` : baseUrl
+      const res = await fetch(url, { headers: authHeaders(token) })
       if (!res.ok) throw new Error('Failed')
       const data = await res.json()
       setMatch(data)
     } catch { setError('Failed to load match') }
     finally { setFetching(false) }
   }, [id])
-
   useEffect(() => { fetchMatch() }, [fetchMatch])
 
   // ✅ Load full player objects for rich picker
