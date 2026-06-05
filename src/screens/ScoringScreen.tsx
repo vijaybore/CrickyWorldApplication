@@ -935,10 +935,12 @@ export default function ScoringScreen() {
             ) : null}
 
             {/* Action buttons */}
+            
             <View style={{ flexDirection: 'row', gap: 6, marginHorizontal: 12, marginTop: 8 }}>
               <Pressable android_ripple={{ color: "rgba(255,255,255,0.12)" }} onPress={() => { setStriker(nonStriker); setNonStriker(striker) }} style={S.actionBtn}>
                 <Text style={S.actionBtnTxt}>⇄ SWITCH BAT</Text>
               </Pressable>
+              
               <Pressable android_ripple={{ color: "rgba(255,255,255,0.12)" }} onPress={handleEndInnings} style={S.actionBtn}>
                 <Text style={S.actionBtnTxt}>END INNINGS</Text>
               </Pressable>
@@ -946,6 +948,7 @@ export default function ScoringScreen() {
 
           </ScrollView>
         )}
+        
 
         {tab === 'scorecard'  && <ScorecardTab  match={match} />}
         {tab === 'ballbyball' && <BallByBallTab match={match} />}
