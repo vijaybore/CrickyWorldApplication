@@ -663,12 +663,14 @@ export default function ScoringScreen() {
   const okEnabled       = runs !== null && !loading
 
   // ── POST ball to API ──────────────────────────────────────────────────────
-  const postBall = async (ballData: any) => {
+const postBall = async (ballData: any) => {
     try {
       setLoading(true)
       const token = await getToken()
+      const deviceId = await AsyncStorage.getItem('@crickyworld:deviceId').catch(() => null)
+      const body = token ? ballData : { ...ballData, deviceId }
       const res = await fetch(apiUrl(`/api/matches/${id}/ball`), {
-        method: 'POST', headers: jsonHeaders(token), body: JSON.stringify(ballData)})
+        method: 'POST', headers: jsonHeaders(token), body: JSON.stringify(body)})
       if (!res.ok) throw new Error('Failed to record ball')
       const data = await res.json()
       setMatch(data)
@@ -715,7 +717,9 @@ export default function ScoringScreen() {
     try {
       setLoading(true)
       const token = await getToken()
-      const res = await fetch(apiUrl(`/api/matches/${id}/undo`), { method: 'POST', headers: jsonHeaders(token) })
+const deviceId = await AsyncStorage.getItem('@crickyworld:deviceId').catch(() => null)
+const undoBody = token ? {} : { deviceId }
+const res = await fetch(apiUrl(`/api/matches/${id}/undo`), { method: 'POST', headers: jsonHeaders(token), body: JSON.stringify(undoBody) })
       if (!res.ok) throw new Error()
       setMatch(await res.json())
     } catch { Alert.alert('Undo', 'Nothing to undo') }
