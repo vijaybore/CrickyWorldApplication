@@ -1,13 +1,7 @@
 // src/screens/ScoringScreen.tsx
-// ─────────────────────────────────────────────────────────────────────────────
-// CrickyWorld — Ball-by-ball Live Scoring Screen
-// Converted from Scoring.jsx → React Native TypeScript
-// Tabs: Scoring | Scorecard | Ball×Ball
-// ─────────────────────────────────────────────────────────────────────────────
-
 import React, { useState, useEffect, useCallback, useRef } from 'react'
 import {
-  View, Text , Pressable, ScrollView, TextInput,
+  View, Text, Pressable, ScrollView, TextInput,
   Modal, FlatList, StyleSheet, ActivityIndicator,
   Alert, StatusBar, Platform} from 'react-native'
 import { useRoute, useNavigation, CommonActions } from '@react-navigation/native'
@@ -20,38 +14,33 @@ import type { RootStackParamList, Ball, BattingStats, BowlingStats } from '../ty
 type Route = RouteProp<RootStackParamList, 'Scoring'>
 type Nav   = NativeStackNavigationProp<RootStackParamList>
 
-// ── Player info type ──────────────────────────────────────────────────────────
 type PlayerInfo = {
-  name: string
-  role?: string
+  name: string; role?: string
   jerseyNumber?: string | number
-  battingStyle?: string
-  bowlingStyle?: string
+  battingStyle?: string; bowlingStyle?: string
 }
 
-// ── Theme ─────────────────────────────────────────────────────────────────────
+// ── Theme matching Home Screen ────────────────────────────────────────────────
 const T = {
-  bg: '#0b0f1a', surface: '#111827', card: '#151e2e', card2: '#1a2540',
-  border: '#1f2d42', border2: '#162032',
-  accent: '#10b981', accentDim: '#064e3b',
+  bg: '#0a0a0a', surface: '#111111', card: '#161616', card2: '#1c1c1c',
+  border: '#222222', border2: '#1a1a1a',
+  accent: '#cc0000', accentDim: '#4a0000', accentBright: '#ff2222',
   gold: '#f59e0b', goldDim: '#78350f',
-  red: '#ef4444', redDim: '#7f1d1d',
+  green: '#22c55e', greenDim: '#14532d',
   orange: '#fb923c', orangeDim: '#431407',
   sky: '#38bdf8', purple: '#c084fc', purpleDim: '#3b0764',
-  text: '#f1f5f9', text2: '#cbd5e1', subtext: '#94a3b8', muted: '#475569',
-  faint: '#1e293b'}
+  text: '#f0f0f0', text2: '#cccccc', subtext: '#888888', muted: '#555555',
+  faint: '#1a1a1a'
+}
 
-// ── Role display helpers ──────────────────────────────────────────────────────
 const ROLE_COLOR: Record<string, string> = {
-  batsman: '#60a5fa', bowler: '#f87171',
-  allrounder: '#facc15', 'wk-batsman': '#a78bfa',
+  batsman: '#60a5fa', bowler: '#f87171', allrounder: '#facc15', 'wk-batsman': '#a78bfa',
 }
 const ROLE_LABEL: Record<string, string> = {
-  batsman: 'BAT', bowler: 'BOWL',
-  allrounder: 'ALL', 'wk-batsman': 'WK',
+  batsman: 'BAT', bowler: 'BOWL', allrounder: 'ALL', 'wk-batsman': 'WK',
 }
 
-const fmtOv  = (balls: number) => `${Math.floor(balls / 6)}.${balls % 6}`
+const fmtOv   = (balls: number) => `${Math.floor(balls / 6)}.${balls % 6}`
 const calcCRR = (runs: number, balls: number) => balls === 0 ? '0.0' : (runs / (balls / 6)).toFixed(1)
 const calcRRR = (target: number, runs: number, balls: number, totalOvers: number) => {
   const rem = totalOvers * 6 - balls
@@ -65,144 +54,81 @@ async function getToken(): Promise<string | null> {
 // ── BallDot ───────────────────────────────────────────────────────────────────
 function BallDot({ ball, size = 30 }: { ball: Ball; size?: number }) {
   let bg = T.faint, color = T.muted, label = String(ball.runs ?? 0)
-  if      (ball.isWicket) { bg = T.redDim;    color = T.red;    label = 'W' }
-  else if (ball.isWide)   { bg = '#1e3a5f';   color = T.sky;    label = ball.runs > 1 ? `+${ball.runs}` : 'Wd' }
-  else if (ball.isNoBall) { bg = T.orangeDim; color = T.orange; label = ball.runs > 0 ? `+${ball.runs}` : 'NB' }
-  else if (ball.runs === 4) { bg = T.accentDim; color = T.accent; label = '4' }
-  else if (ball.runs === 6) { bg = T.purpleDim; color = T.purple; label = '6' }
-  else if (ball.runs === 0) { bg = T.border2;   color = T.muted;  label = '·' }
+  if      (ball.isWicket) { bg = T.accentDim;  color = T.accent;  label = 'W' }
+  else if (ball.isWide)   { bg = '#1e3a5f';    color = T.sky;     label = ball.runs > 1 ? `+${ball.runs}` : 'Wd' }
+  else if (ball.isNoBall) { bg = T.orangeDim;  color = T.orange;  label = ball.runs > 0 ? `+${ball.runs}` : 'NB' }
+  else if (ball.runs === 4) { bg = T.greenDim; color = T.green;   label = '4' }
+  else if (ball.runs === 6) { bg = T.purpleDim;color = T.purple;  label = '6' }
+  else if (ball.runs === 0) { bg = T.border2;  color = T.muted;   label = '·' }
   return (
-    <View style={{ width: size, height: size, borderRadius: size / 2, backgroundColor: bg, borderWidth: 1, borderColor: color + '44', alignItems: 'center', justifyContent: 'center' }}>
+    <View style={{ width: size, height: size, borderRadius: size/2, backgroundColor: bg, borderWidth: 1, borderColor: color+'44', alignItems: 'center', justifyContent: 'center' }}>
       <Text style={{ color, fontSize: size < 30 ? 10 : 11, fontWeight: '800' }}>{label}</Text>
     </View>
   )
 }
 
-// ── Enhanced Player Picker Modal ──────────────────────────────────────────────
-function PlayerPicker({
-  visible, onClose, onSelect, title, accentColor = T.sky,
-  players = [], allPlayerInfo = [],
-}: {
-  visible: boolean
-  onClose: () => void
-  onSelect: (name: string) => void
-  title: string
-  accentColor?: string
-  players: string[]
-  allPlayerInfo?: PlayerInfo[]
+// ── Player Picker Modal ───────────────────────────────────────────────────────
+function PlayerPicker({ visible, onClose, onSelect, title, accentColor = T.sky, players = [], allPlayerInfo = [] }: {
+  visible: boolean; onClose: () => void; onSelect: (name: string) => void
+  title: string; accentColor?: string; players: string[]; allPlayerInfo?: PlayerInfo[]
 }) {
   const [query, setQuery] = useState('')
   useEffect(() => { if (visible) setQuery('') }, [visible])
-
-  const filtered = players.filter(n =>
-    n.toLowerCase().includes(query.toLowerCase())
-  )
-  const canAddNew = query.trim() !== '' &&
-    !players.some(n => n.toLowerCase() === query.trim().toLowerCase())
-
-  const getInfo = (name: string): PlayerInfo | undefined =>
-    allPlayerInfo.find(p => p.name.toLowerCase() === name.toLowerCase())
-
+  const filtered = players.filter(n => n.toLowerCase().includes(query.toLowerCase()))
+  const canAddNew = query.trim() !== '' && !players.some(n => n.toLowerCase() === query.trim().toLowerCase())
+  const getInfo = (name: string) => allPlayerInfo.find(p => p.name.toLowerCase() === name.toLowerCase())
   const listData = canAddNew
     ? [{ name: query.trim(), isNew: true }, ...filtered.map(n => ({ name: n, isNew: false }))]
     : filtered.map(n => ({ name: n, isNew: false }))
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <View style={PP.backdrop}>
-        <Pressable style={{ flex: 1 }} onPress={onClose} />
-      </View>
+      <View style={PP.backdrop}><Pressable style={{ flex: 1 }} onPress={onClose} /></View>
       <View style={PP.sheet}>
         <View style={PP.handle} />
         <Text style={[PP.title, { color: accentColor }]}>{title}</Text>
-
-        {/* Search input */}
         <View style={PP.inputRow}>
-          <View style={[PP.inputWrap, { borderColor: accentColor + '55' }]}>
+          <View style={[PP.inputWrap, { borderColor: accentColor+'55' }]}>
             <Text style={{ color: accentColor, fontSize: 14, marginRight: 6 }}>🔍</Text>
-            <TextInput
-              style={PP.input}
-              value={query}
-              onChangeText={setQuery}
-              placeholder="Search by name…"
-              placeholderTextColor={T.muted}
-              autoFocus
-              returnKeyType="done"
-              onSubmitEditing={() => query.trim() && onSelect(query.trim())}
-            />
-            {query !== '' ? (
-              <Pressable onPress={() => setQuery('')}>
-                <Text style={{ color: T.muted, fontSize: 14 }}>✕</Text>
-              </Pressable>
-            ) : null}
+            <TextInput style={PP.input} value={query} onChangeText={setQuery}
+              placeholder="Search by name…" placeholderTextColor={T.muted} autoFocus
+              returnKeyType="done" onSubmitEditing={() => query.trim() && onSelect(query.trim())} />
+            {query !== '' && <Pressable onPress={() => setQuery('')}><Text style={{ color: T.muted, fontSize: 14 }}>✕</Text></Pressable>}
           </View>
-          {query.trim() !== '' ? (
-            <Pressable
-              onPress={() => onSelect(query.trim())}
-              style={[PP.setBtn, { backgroundColor: accentColor + '22', borderColor: accentColor + '55' }]}
-            >
+          {query.trim() !== '' && (
+            <Pressable onPress={() => onSelect(query.trim())} style={[PP.setBtn, { backgroundColor: accentColor+'22', borderColor: accentColor+'55' }]}>
               <Text style={{ color: accentColor, fontWeight: '800', fontSize: 13 }}>Set</Text>
             </Pressable>
-          ) : null}
+          )}
         </View>
-
-        {/* Player list */}
-        <FlatList
-          data={listData}
-          keyExtractor={(item, i) => item.name + i}
-          style={{ maxHeight: 320 }}
-          keyboardShouldPersistTaps="handled"
+        <FlatList data={listData} keyExtractor={(item, i) => item.name + i} style={{ maxHeight: 320 }} keyboardShouldPersistTaps="handled"
           renderItem={({ item }) => {
-            if (item.isNew) {
-              return (
-                <Pressable
-                  android_ripple={{ color: 'rgba(255,255,255,0.08)' }}
-                  onPress={() => onSelect(item.name)}
-                  style={[PP.playerRow, { backgroundColor: accentColor + '12', borderColor: accentColor + '44' }]}
-                >
-                  <Text style={{ color: accentColor, fontWeight: '800', fontSize: 14 }}>
-                    ＋ Add "{item.name}"
-                  </Text>
-                </Pressable>
-              )
-            }
-
+            if (item.isNew) return (
+              <Pressable android_ripple={{ color: 'rgba(255,255,255,0.08)' }} onPress={() => onSelect(item.name)}
+                style={[PP.playerRow, { backgroundColor: accentColor+'12', borderColor: accentColor+'44' }]}>
+                <Text style={{ color: accentColor, fontWeight: '800', fontSize: 14 }}>＋ Add "{item.name}"</Text>
+              </Pressable>
+            )
             const info = getInfo(item.name)
             const roleColor = info?.role ? (ROLE_COLOR[info.role] ?? T.muted) : T.muted
             const roleLabel = info?.role ? (ROLE_LABEL[info.role] ?? null) : null
-            const initials  = item.name.split(' ').map((w: string) => w[0]).join('').toUpperCase().slice(0, 2)
-
+            const initials = item.name.split(' ').map((w: string) => w[0]).join('').toUpperCase().slice(0, 2)
             return (
-              <Pressable
-                android_ripple={{ color: 'rgba(255,255,255,0.08)' }}
-                onPress={() => onSelect(item.name)}
-                style={PP.playerRow}
-              >
-                {/* Initials avatar */}
-                <View style={[PP.avatar, { backgroundColor: roleColor + '22', borderColor: roleColor + '55' }]}>
+              <Pressable android_ripple={{ color: 'rgba(255,255,255,0.08)' }} onPress={() => onSelect(item.name)} style={PP.playerRow}>
+                <View style={[PP.avatar, { backgroundColor: roleColor+'22', borderColor: roleColor+'55' }]}>
                   <Text style={{ color: roleColor, fontSize: 12, fontWeight: '800' }}>{initials}</Text>
                 </View>
-
-                {/* Name + style */}
                 <View style={{ flex: 1 }}>
                   <Text style={PP.playerName}>{item.name}</Text>
-                  {info?.battingStyle || info?.bowlingStyle ? (
-                    <Text style={PP.playerSub} numberOfLines={1}>
-                      {[info.battingStyle, info.bowlingStyle].filter(Boolean).join('  ·  ')}
-                    </Text>
-                  ) : null}
+                  {info?.battingStyle || info?.bowlingStyle
+                    ? <Text style={PP.playerSub} numberOfLines={1}>{[info.battingStyle, info.bowlingStyle].filter(Boolean).join('  ·  ')}</Text>
+                    : null}
                 </View>
-
-                {/* Role badge + jersey */}
                 <View style={{ alignItems: 'flex-end', gap: 3 }}>
-                  {roleLabel ? (
-                    <View style={[PP.roleBadge, { backgroundColor: roleColor + '18', borderColor: roleColor + '44' }]}>
-                      <Text style={{ color: roleColor, fontSize: 9, fontWeight: '800' }}>{roleLabel}</Text>
-                    </View>
-                  ) : null}
-                  {info?.jerseyNumber ? (
-                    <Text style={PP.jersey}>#{info.jerseyNumber}</Text>
-                  ) : null}
+                  {roleLabel && <View style={[PP.roleBadge, { backgroundColor: roleColor+'18', borderColor: roleColor+'44' }]}>
+                    <Text style={{ color: roleColor, fontSize: 9, fontWeight: '800' }}>{roleLabel}</Text>
+                  </View>}
+                  {info?.jerseyNumber && <Text style={PP.jersey}>#{info.jerseyNumber}</Text>}
                 </View>
               </Pressable>
             )
@@ -210,18 +136,11 @@ function PlayerPicker({
           ListEmptyComponent={
             <View style={{ padding: 24, alignItems: 'center' }}>
               <Text style={{ fontSize: 28, marginBottom: 8 }}>🔍</Text>
-              <Text style={{ color: T.muted, fontSize: 13, textAlign: 'center' }}>
-                No players found.{'\n'}Type a name above to add.
-              </Text>
+              <Text style={{ color: T.muted, fontSize: 13, textAlign: 'center' }}>No players found.{'\n'}Type a name above to add.</Text>
             </View>
           }
         />
-
-        <Pressable
-          android_ripple={{ color: 'rgba(255,255,255,0.12)' }}
-          onPress={onClose}
-          style={PP.cancelBtn}
-        >
+        <Pressable android_ripple={{ color: 'rgba(255,255,255,0.12)' }} onPress={onClose} style={PP.cancelBtn}>
           <Text style={{ color: T.subtext, fontWeight: '700', fontSize: 13 }}>Cancel</Text>
         </Pressable>
       </View>
@@ -230,7 +149,7 @@ function PlayerPicker({
 }
 
 const PP = StyleSheet.create({
-  backdrop:   { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.72)' },
+  backdrop:   { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.80)' },
   sheet:      { position: 'absolute', bottom: 0, left: 0, right: 0, backgroundColor: T.card, borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 16, paddingBottom: 36, borderWidth: 1, borderColor: T.border, maxHeight: '80%' },
   handle:     { width: 36, height: 4, backgroundColor: T.muted, borderRadius: 2, alignSelf: 'center', marginBottom: 16 },
   title:      { fontSize: 11, fontWeight: '800', letterSpacing: 1.5, marginBottom: 12 },
@@ -256,7 +175,6 @@ function NewBatsmanModal({ visible, outName, wicketType, players, onConfirm }: {
   useEffect(() => { if (visible) setQuery('') }, [visible])
   const filtered  = players.filter(n => n.toLowerCase().includes(query.toLowerCase()))
   const canAddNew = query.trim() !== '' && !players.some(n => n.toLowerCase() === query.trim().toLowerCase())
-
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={() => {}}>
       <View style={NB.overlay}>
@@ -265,29 +183,26 @@ function NewBatsmanModal({ visible, outName, wicketType, players, onConfirm }: {
           <Text style={NB.title}>WICKET!</Text>
           <Text style={NB.sub}>{outName} — {wicketType ?? 'Out'}</Text>
           <Text style={NB.sub2}>Select next batsman</Text>
-
           <TextInput style={NB.input} value={query} onChangeText={setQuery}
             placeholder="Search or type name…" placeholderTextColor={T.muted}
             autoFocus returnKeyType="done" onSubmitEditing={() => query.trim() && onConfirm(query.trim())} />
-
           <ScrollView style={{ maxHeight: 220 }} keyboardShouldPersistTaps="handled">
-            {canAddNew ? (
-              <Pressable android_ripple={{ color: "rgba(255,255,255,0.12)" }} onPress={() => onConfirm(query.trim())} style={[NB.row, { backgroundColor: 'rgba(255,68,68,0.1)', borderColor: 'rgba(255,68,68,0.3)' }]}>
-                <Text style={{ color: T.red, fontWeight: '700', fontSize: 13 }}>＋ Add "{query.trim()}"</Text>
+            {canAddNew && (
+              <Pressable android_ripple={{ color: "rgba(255,255,255,0.12)" }} onPress={() => onConfirm(query.trim())} style={[NB.row, { backgroundColor: 'rgba(204,0,0,0.1)', borderColor: 'rgba(204,0,0,0.3)' }]}>
+                <Text style={{ color: T.accent, fontWeight: '700', fontSize: 13 }}>＋ Add "{query.trim()}"</Text>
               </Pressable>
-            ) : null}
+            )}
             {filtered.map(name => (
               <Pressable android_ripple={{ color: "rgba(255,255,255,0.12)" }} key={name} onPress={() => onConfirm(name)} style={NB.row}>
                 <Text style={{ color: T.text, fontWeight: '700', fontSize: 14 }}>{name}</Text>
               </Pressable>
             ))}
           </ScrollView>
-
-          {query.trim() !== '' ? (
+          {query.trim() !== '' && (
             <Pressable android_ripple={{ color: "rgba(255,255,255,0.12)" }} onPress={() => onConfirm(query.trim())} style={NB.confirmBtn}>
               <Text style={{ color: T.text, fontWeight: '800', fontSize: 16 }}>✓ CONFIRM</Text>
             </Pressable>
-          ) : null}
+          )}
         </View>
       </View>
     </Modal>
@@ -295,17 +210,17 @@ function NewBatsmanModal({ visible, outName, wicketType, players, onConfirm }: {
 }
 
 const NB = StyleSheet.create({
-  overlay:    { flex: 1, backgroundColor: 'rgba(0,0,0,0.85)', alignItems: 'center', justifyContent: 'center', padding: 20 },
-  box:        { width: '100%', maxWidth: 360, backgroundColor: T.surface, borderRadius: 20, padding: 24, paddingBottom: 20, borderWidth: 1, borderColor: 'rgba(255,68,68,0.3)', maxHeight: '80%' },
-  title:      { color: T.red, fontSize: 22, fontWeight: '700', textAlign: 'center', letterSpacing: 1, marginBottom: 4 },
+  overlay:    { flex: 1, backgroundColor: 'rgba(0,0,0,0.90)', alignItems: 'center', justifyContent: 'center', padding: 20 },
+  box:        { width: '100%', maxWidth: 360, backgroundColor: T.surface, borderRadius: 20, padding: 24, paddingBottom: 20, borderWidth: 1, borderColor: 'rgba(204,0,0,0.3)', maxHeight: '80%' },
+  title:      { color: T.accent, fontSize: 22, fontWeight: '700', textAlign: 'center', letterSpacing: 1, marginBottom: 4 },
   sub:        { color: T.subtext, fontSize: 13, textAlign: 'center', marginBottom: 4 },
   sub2:       { color: T.text2, fontSize: 12, textAlign: 'center', marginBottom: 16 },
-  input:      { backgroundColor: T.surface, borderWidth: 1.5, borderColor: 'rgba(255,68,68,0.35)', borderRadius: 11, paddingHorizontal: 13, paddingVertical: 12, color: T.text, fontSize: 14, marginBottom: 10 },
+  input:      { backgroundColor: T.surface, borderWidth: 1.5, borderColor: 'rgba(204,0,0,0.35)', borderRadius: 11, paddingHorizontal: 13, paddingVertical: 12, color: T.text, fontSize: 14, marginBottom: 10 },
   row:        { paddingVertical: 11, paddingHorizontal: 13, borderRadius: 9, backgroundColor: T.border2, borderWidth: 1, borderColor: T.border, marginBottom: 6 },
   confirmBtn: { backgroundColor: T.accent, borderRadius: 11, padding: 13, alignItems: 'center', marginTop: 8 },
 })
 
-// ── Bowler Change Modal ────────────────────────────────────────────────────────
+// ── Bowler Change Modal ───────────────────────────────────────────────────────
 function BowlerChangeModal({ visible, players, lastBowler, onConfirm, onSkip }: {
   visible: boolean; players: string[]; lastBowler: string
   onConfirm: (name: string) => void; onSkip: () => void
@@ -314,7 +229,6 @@ function BowlerChangeModal({ visible, players, lastBowler, onConfirm, onSkip }: 
   useEffect(() => { if (visible) setQuery('') }, [visible])
   const filtered  = players.filter(n => n !== lastBowler && n.toLowerCase().includes(query.toLowerCase()))
   const canAddNew = query.trim() !== '' && !players.some(n => n.toLowerCase() === query.trim().toLowerCase())
-
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onSkip}>
       <View style={BC.overlay}><Pressable android_ripple={{ color: "rgba(255,255,255,0.12)" }} style={{ flex: 1 }} onPress={onSkip} /></View>
@@ -323,38 +237,33 @@ function BowlerChangeModal({ visible, players, lastBowler, onConfirm, onSkip }: 
         <Text style={{ fontSize: 32, textAlign: 'center', marginBottom: 6 }}>🏏</Text>
         <Text style={BC.title}>OVER COMPLETE</Text>
         <Text style={BC.sub}>Select bowler for next over</Text>
-
         <TextInput style={BC.input} value={query} onChangeText={setQuery}
           placeholder="Search or type bowler name…" placeholderTextColor={T.muted}
           autoFocus returnKeyType="done" onSubmitEditing={() => query.trim() && onConfirm(query.trim())} />
-
         <ScrollView style={{ maxHeight: 200 }} keyboardShouldPersistTaps="handled">
-          {canAddNew ? (
+          {canAddNew && (
             <Pressable android_ripple={{ color: "rgba(255,255,255,0.12)" }} onPress={() => onConfirm(query.trim())} style={[BC.row, { backgroundColor: 'rgba(251,146,60,0.1)', borderColor: 'rgba(251,146,60,0.3)' }]}>
               <Text style={{ color: T.orange, fontWeight: '700', fontSize: 13 }}>＋ Add "{query.trim()}"</Text>
             </Pressable>
-          ) : null}
+          )}
           {filtered.map(name => (
             <Pressable android_ripple={{ color: "rgba(255,255,255,0.12)" }} key={name} onPress={() => onConfirm(name)} style={BC.row}>
               <Text style={{ color: T.text, fontWeight: '700', fontSize: 14 }}>{name}</Text>
             </Pressable>
           ))}
-          {filtered.length === 0 && !canAddNew ? (
-            <Text style={BC.empty}>
-              {lastBowler ? `${lastBowler} cannot bowl consecutive overs.` : 'Type a bowler name above.'}
-            </Text>
-          ) : null}
+          {filtered.length === 0 && !canAddNew && (
+            <Text style={BC.empty}>{lastBowler ? `${lastBowler} cannot bowl consecutive overs.` : 'Type a bowler name above.'}</Text>
+          )}
         </ScrollView>
-
         <View style={{ flexDirection: 'row', gap: 8, marginTop: 14 }}>
           <Pressable android_ripple={{ color: "rgba(255,255,255,0.12)" }} onPress={onSkip} style={BC.skipBtn}>
             <Text style={{ color: T.subtext, fontWeight: '700', fontSize: 14 }}>Skip</Text>
           </Pressable>
-          {query.trim() !== '' ? (
+          {query.trim() !== '' && (
             <Pressable android_ripple={{ color: "rgba(255,255,255,0.12)" }} onPress={() => onConfirm(query.trim())} style={BC.confirmBtn}>
               <Text style={{ color: '#fff', fontWeight: '800', fontSize: 15 }}>✓ SET BOWLER</Text>
             </Pressable>
-          ) : null}
+          )}
         </View>
       </View>
     </Modal>
@@ -362,7 +271,7 @@ function BowlerChangeModal({ visible, players, lastBowler, onConfirm, onSkip }: 
 }
 
 const BC = StyleSheet.create({
-  overlay:    { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.72)' },
+  overlay:    { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.80)' },
   sheet:      { position: 'absolute', bottom: 0, left: 0, right: 0, backgroundColor: T.card, borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 18, paddingBottom: 36, borderWidth: 1, borderColor: 'rgba(251,146,60,0.3)' },
   handle:     { width: 36, height: 4, backgroundColor: T.muted, borderRadius: 2, alignSelf: 'center', marginBottom: 14 },
   title:      { color: T.orange, fontSize: 20, fontWeight: '700', textAlign: 'center', letterSpacing: 1 },
@@ -374,16 +283,64 @@ const BC = StyleSheet.create({
   confirmBtn: { flex: 2, padding: 12, borderRadius: 11, backgroundColor: T.orange, alignItems: 'center' },
 })
 
+// ── Update Overs Modal ────────────────────────────────────────────────────────
+function UpdateOversModal({ visible, currentOvers, onConfirm, onClose }: {
+  visible: boolean; currentOvers: number; onConfirm: (overs: number) => void; onClose: () => void
+}) {
+  const [value, setValue] = useState(String(currentOvers))
+  useEffect(() => { if (visible) setValue(String(currentOvers)) }, [visible, currentOvers])
+  const options = [1, 2, 3, 4, 5, 6, 7, 8, 10, 12, 15, 20, 25, 30, 35, 40, 50]
+  return (
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+      <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.80)' }}>
+        <Pressable style={{ flex: 1 }} onPress={onClose} />
+      </View>
+      <View style={{ position: 'absolute', bottom: 0, left: 0, right: 0, backgroundColor: T.card, borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20, paddingBottom: 40, borderWidth: 1, borderColor: T.border }}>
+        <View style={{ width: 36, height: 4, backgroundColor: T.muted, borderRadius: 2, alignSelf: 'center', marginBottom: 16 }} />
+        <Text style={{ color: T.gold, fontSize: 11, fontWeight: '800', letterSpacing: 1.5, textAlign: 'center', marginBottom: 4 }}>UPDATE OVERS</Text>
+        <Text style={{ color: T.subtext, fontSize: 12, textAlign: 'center', marginBottom: 16 }}>Current: {currentOvers} overs</Text>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 16 }}>
+          <Pressable onPress={() => setValue(v => String(Math.max(1, parseInt(v||'1') - 1)))}
+            style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: T.border2, borderWidth: 1, borderColor: T.border, alignItems: 'center', justifyContent: 'center' }}>
+            <Text style={{ color: T.text, fontSize: 24, fontWeight: '700' }}>−</Text>
+          </Pressable>
+          <TextInput value={value} onChangeText={setValue} keyboardType="number-pad"
+            style={{ flex: 1, backgroundColor: T.surface, borderWidth: 1.5, borderColor: T.accent+'55', borderRadius: 12, padding: 12, color: T.text, fontSize: 22, fontWeight: '800', textAlign: 'center' }} />
+          <Pressable onPress={() => setValue(v => String(Math.min(50, parseInt(v||'0') + 1)))}
+            style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: T.border2, borderWidth: 1, borderColor: T.border, alignItems: 'center', justifyContent: 'center' }}>
+            <Text style={{ color: T.text, fontSize: 24, fontWeight: '700' }}>＋</Text>
+          </Pressable>
+        </View>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 16 }}>
+          {options.map(o => (
+            <Pressable key={o} onPress={() => setValue(String(o))}
+              style={{ marginRight: 8, paddingHorizontal: 14, paddingVertical: 8, borderRadius: 8, backgroundColor: parseInt(value) === o ? T.accent : T.border2, borderWidth: 1, borderColor: parseInt(value) === o ? T.accent : T.border }}>
+              <Text style={{ color: parseInt(value) === o ? '#fff' : T.subtext, fontWeight: '700', fontSize: 13 }}>{o}</Text>
+            </Pressable>
+          ))}
+        </ScrollView>
+        <View style={{ flexDirection: 'row', gap: 10 }}>
+          <Pressable onPress={onClose} style={{ flex: 1, padding: 13, borderRadius: 11, backgroundColor: T.border2, borderWidth: 1, borderColor: T.border, alignItems: 'center' }}>
+            <Text style={{ color: T.subtext, fontWeight: '700' }}>Cancel</Text>
+          </Pressable>
+          <Pressable onPress={() => { const n = parseInt(value); if (n >= 1 && n <= 50) onConfirm(n) }} style={{ flex: 2, padding: 13, borderRadius: 11, backgroundColor: T.accent, alignItems: 'center' }}>
+            <Text style={{ color: '#fff', fontWeight: '800', fontSize: 15 }}>✓ UPDATE OVERS</Text>
+          </Pressable>
+        </View>
+      </View>
+    </Modal>
+  )
+}
+
 // ── Scorecard Tab ─────────────────────────────────────────────────────────────
 function ScorecardTab({ match }: { match: any }) {
-  const [activeInn, setActiveInn] = useState<'innings1' | 'innings2'>('innings1')
+  const [activeInn, setActiveInn] = useState<'innings1'|'innings2'>('innings1')
   const inn = match[activeInn]
   const hs  = Math.max(...(inn.battingStats ?? []).map((p: BattingStats) => p.runs), 0)
-
   return (
     <ScrollView contentContainerStyle={{ paddingBottom: 40 }}>
       <View style={{ flexDirection: 'row', borderBottomWidth: 1, borderBottomColor: T.border }}>
-        {(['innings1', 'innings2'] as const).map(k => (
+        {(['innings1','innings2'] as const).map(k => (
           <Pressable android_ripple={{ color: "rgba(255,255,255,0.12)" }} key={k} onPress={() => setActiveInn(k)}
             style={[SC.tab, activeInn === k && { borderBottomWidth: 2, borderBottomColor: T.accent }]}>
             <Text style={[SC.tabTxt, activeInn === k && { color: T.accent }]}>
@@ -392,12 +349,10 @@ function ScorecardTab({ match }: { match: any }) {
           </Pressable>
         ))}
       </View>
-
       <View style={{ padding: 14, borderBottomWidth: 1, borderBottomColor: T.border }}>
         <Text style={SC.scoreText}>{inn.runs}/{inn.wickets}</Text>
         <Text style={SC.oversText}>({fmtOv(inn.balls)} ov)</Text>
       </View>
-
       <View style={SC.tableHeader}>
         {['BATTER','R','B','4s','6s','SR'].map((h, i) => (
           <Text key={h} style={[SC.th, i === 0 && { flex: 2, textAlign: 'left' }]}>{h}</Text>
@@ -408,17 +363,16 @@ function ScorecardTab({ match }: { match: any }) {
           <Text style={[SC.td, { flex: 2, textAlign: 'left', color: p.runs === hs ? T.gold : T.text }]} numberOfLines={1}>{p.name}</Text>
           <Text style={[SC.td, { color: p.runs >= 50 ? T.gold : T.text, fontWeight: '700' }]}>{p.runs}{p.isOut ? '' : '*'}</Text>
           <Text style={SC.td}>{p.balls}</Text>
-          <Text style={[SC.td, { color: T.accent }]}>{p.fours}</Text>
+          <Text style={[SC.td, { color: T.green }]}>{p.fours}</Text>
           <Text style={[SC.td, { color: T.purple }]}>{p.sixes}</Text>
           <Text style={SC.td}>{p.balls > 0 ? (p.runs / p.balls * 100).toFixed(0) : '—'}</Text>
         </View>
       ))}
-      <View style={[SC.row, { backgroundColor: T.goldDim + '33', borderTopWidth: 1, borderTopColor: T.gold + '44' }]}>
+      <View style={[SC.row, { backgroundColor: T.goldDim+'33', borderTopWidth: 1, borderTopColor: T.gold+'44' }]}>
         <Text style={[SC.td, { flex: 3, textAlign: 'left', color: T.gold, fontWeight: '800' }]}>TOTAL</Text>
         <Text style={[SC.td, { flex: 3, textAlign: 'right', color: T.gold, fontWeight: '800', fontSize: 14 }]}>{inn.runs}/{inn.wickets} ({fmtOv(inn.balls)})</Text>
       </View>
-
-      <View style={[SC.tableHeader, { backgroundColor: '#181c28', marginTop: 4 }]}>
+      <View style={[SC.tableHeader, { backgroundColor: '#181818', marginTop: 4 }]}>
         {['BOWLER','O','R','W','ECO'].map((h, i) => (
           <Text key={h} style={[SC.th, { color: T.purple }, i === 0 && { flex: 2, textAlign: 'left' }]}>{h}</Text>
         ))}
@@ -429,7 +383,7 @@ function ScorecardTab({ match }: { match: any }) {
           <Text style={SC.td}>{fmtOv(b.balls)}</Text>
           <Text style={SC.td}>{b.runs}</Text>
           <Text style={[SC.td, { color: b.wickets > 0 ? T.purple : T.muted, fontWeight: '700' }]}>{b.wickets}</Text>
-          <Text style={[SC.td, { color: b.balls > 0 && b.runs / (b.balls / 6) <= 6 ? T.accent : T.text2 }]}>
+          <Text style={[SC.td, { color: b.balls > 0 && b.runs / (b.balls / 6) <= 6 ? T.green : T.text2 }]}>
             {b.balls > 0 ? (b.runs / (b.balls / 6)).toFixed(2) : '—'}
           </Text>
         </View>
@@ -449,19 +403,17 @@ const SC = StyleSheet.create({
   td:         { flex: 1, textAlign: 'right', fontSize: 12, color: T.text2, fontVariant: ['tabular-nums'] },
 })
 
-// ── Ball by Ball Tab ───────────────────────────────────────────────────────────
+// ── Ball by Ball Tab ──────────────────────────────────────────────────────────
 function BallByBallTab({ match }: { match: any }) {
   const innings = [match.innings2, match.innings1].filter((i: any) => i?.battingTeam && (i.ballByBall?.length ?? 0) > 0)
   const [activeIdx, setActiveIdx] = useState(0)
   const current = innings[activeIdx]
-
   if (!current) return (
     <View style={{ alignItems: 'center', padding: 60 }}>
       <Text style={{ fontSize: 36, marginBottom: 12 }}>📻</Text>
       <Text style={{ color: T.text2, fontWeight: '700' }}>No balls bowled yet</Text>
     </View>
   )
-
   const overs: Ball[][] = []
   let legal = 0
   ;(current.ballByBall as Ball[]).forEach((b: Ball) => {
@@ -471,10 +423,9 @@ function BallByBallTab({ match }: { match: any }) {
     if (!overs[idx]) overs[idx] = []
     overs[idx].push(b)
   })
-
   return (
     <ScrollView contentContainerStyle={{ paddingBottom: 40 }}>
-      {innings.length > 1 ? (
+      {innings.length > 1 && (
         <View style={{ flexDirection: 'row', borderBottomWidth: 1, borderBottomColor: T.border }}>
           {innings.map((inn: any, i: number) => (
             <Pressable android_ripple={{ color: "rgba(255,255,255,0.12)" }} key={i} onPress={() => setActiveIdx(i)}
@@ -483,8 +434,7 @@ function BallByBallTab({ match }: { match: any }) {
             </Pressable>
           ))}
         </View>
-      ) : null}
-
+      )}
       {[...overs].reverse().map((balls, ri) => {
         const overNum = overs.length - 1 - ri
         const overRuns = balls.reduce((s: number, b: Ball) => s + (b.runs ?? 0), 0)
@@ -493,12 +443,8 @@ function BallByBallTab({ match }: { match: any }) {
           <View key={overNum} style={{ borderBottomWidth: 1, borderBottomColor: T.border }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 8, paddingHorizontal: 14, backgroundColor: T.card }}>
               <Text style={{ color: T.gold, fontWeight: '800', fontSize: 12 }}>Over {overNum + 1}</Text>
-              <View style={{ flexDirection: 'row', gap: 4 }}>
-                {balls.map((b: Ball, i: number) => <BallDot key={i} ball={b} size={24} />)}
-              </View>
-              <Text style={{ color: T.text2, fontSize: 11, fontVariant: ['tabular-nums'] }}>
-                {overRuns}r{overWkts > 0 ? ` · ${overWkts}W` : ''}
-              </Text>
+              <View style={{ flexDirection: 'row', gap: 4 }}>{balls.map((b: Ball, i: number) => <BallDot key={i} ball={b} size={24} />)}</View>
+              <Text style={{ color: T.text2, fontSize: 11, fontVariant: ['tabular-nums'] }}>{overRuns}r{overWkts > 0 ? ` · ${overWkts}W` : ''}</Text>
             </View>
             {[...balls].reverse().map((ball: Ball, bi: number) => {
               let desc = `${ball.batsmanName ?? 'Batsman'} — ${ball.runs} run${ball.runs !== 1 ? 's' : ''}`
@@ -508,13 +454,11 @@ function BallByBallTab({ match }: { match: any }) {
               if (ball.runs === 6 && !ball.isWide && !ball.isNoBall) desc = `SIX! ${ball.batsmanName} hits ${ball.bowlerName}`
               if (ball.runs === 4 && !ball.isWide && !ball.isNoBall) desc = `FOUR! ${ball.batsmanName}`
               return (
-                <View key={bi} style={[{ flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 14, paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.03)' }, ball.isWicket && { backgroundColor: 'rgba(255,68,68,0.05)' }]}>
+                <View key={bi} style={[{ flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 14, paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.03)' }, ball.isWicket && { backgroundColor: 'rgba(204,0,0,0.05)' }]}>
                   <BallDot ball={ball} size={26} />
                   <View style={{ flex: 1 }}>
-                    <Text style={{ fontSize: 12, color: ball.isWicket ? T.red : T.text, fontWeight: ball.isWicket ? '700' : '400' }}>{desc}</Text>
-                    {ball.bowlerName && !ball.isWide && !ball.isNoBall ? (
-                      <Text style={{ fontSize: 11, color: T.muted, marginTop: 1 }}>b {ball.bowlerName}</Text>
-                    ) : null}
+                    <Text style={{ fontSize: 12, color: ball.isWicket ? T.accent : T.text, fontWeight: ball.isWicket ? '700' : '400' }}>{desc}</Text>
+                    {ball.bowlerName && !ball.isWide && !ball.isNoBall && <Text style={{ fontSize: 11, color: T.muted, marginTop: 1 }}>b {ball.bowlerName}</Text>}
                   </View>
                 </View>
               )
@@ -526,23 +470,19 @@ function BallByBallTab({ match }: { match: any }) {
   )
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// MAIN SCREEN
-// ─────────────────────────────────────────────────────────────────────────────
+// ── MAIN SCREEN ───────────────────────────────────────────────────────────────
 export default function ScoringScreen() {
   const route      = useRoute<Route>()
   const navigation = useNavigation<Nav>()
   const { id }     = route.params
 
   const [match,      setMatch]      = useState<any>(null)
-  const [tab,        setTab]        = useState<'scoring' | 'scorecard' | 'ballbyball'>('scoring')
+  const [tab,        setTab]        = useState<'scoring'|'scorecard'|'ballbyball'>('scoring')
   const [loading,    setLoading]    = useState(false)
   const [fetching,   setFetching]   = useState(true)
   const [error,      setError]      = useState('')
-  // ✅ store full player objects for rich picker display
   const [allPlayers, setAllPlayers] = useState<PlayerInfo[]>([])
 
-  // Scoring state
   const [striker,      setStriker]      = useState('')
   const [nonStriker,   setNonStriker]   = useState('')
   const [bowlerName,   setBowlerName]   = useState('')
@@ -554,43 +494,43 @@ export default function ScoringScreen() {
   const [noBall,       setNoBall]       = useState(false)
   const [showWktMenu,  setShowWktMenu]  = useState(false)
 
-  // Modals
-  const [picker,         setPicker]         = useState<'striker' | 'nonStriker' | 'bowler' | null>(null)
+  const [picker,         setPicker]         = useState<'striker'|'nonStriker'|'bowler'|null>(null)
   const [newBatsmanOpen, setNewBatsmanOpen] = useState(false)
   const [overChangeOpen, setOverChangeOpen] = useState(false)
+  const [updateOversOpen,setUpdateOversOpen]= useState(false)
   const [pendingBall,    setPendingBall]    = useState<any>(null)
 
   const legalBallsRef = useRef(0)
 
   const fetchMatch = useCallback(async () => {
     try {
-      const token = await getToken()
+      const token    = await getToken()
       const deviceId = await AsyncStorage.getItem('@crickyworld:deviceId').catch(() => null)
-      const baseUrl = apiUrl(`/api/matches/${id}`)
-      const url = !token && deviceId ? `${baseUrl}?deviceId=${deviceId}` : baseUrl
-      const res = await fetch(url, { headers: authHeaders(token) })
+      const baseUrl  = apiUrl(`/api/matches/${id}`)
+      const url      = !token && deviceId ? `${baseUrl}?deviceId=${deviceId}` : baseUrl
+      const res      = await fetch(url, { headers: authHeaders(token) })
       if (!res.ok) throw new Error('Failed')
       const data = await res.json()
       setMatch(data)
     } catch { setError('Failed to load match') }
     finally { setFetching(false) }
   }, [id])
+
   useEffect(() => { fetchMatch() }, [fetchMatch])
 
-  // ✅ Load full player objects for rich picker
   useEffect(() => {
     const load = async () => {
       const token = await getToken()
-      const res = await fetch(apiUrl('/api/players'), { headers: authHeaders(token) })
-      if (res.ok) {
-        const data = await res.json() as PlayerInfo[]
-        setAllPlayers(data)
-      }
+      const deviceId = await AsyncStorage.getItem('@crickyworld:deviceId').catch(() => null)
+      const baseUrl = apiUrl('/api/players')
+      const url = !token && deviceId ? `${baseUrl}?deviceId=${deviceId}` : baseUrl
+      const res = await fetch(url, { headers: authHeaders(token) })
+      if (res.ok) setAllPlayers(await res.json() as PlayerInfo[])
     }
     load().catch(() => {})
   }, [])
 
-  // Auto-init players when match loads
+  // Auto-init players + alert if not set
   useEffect(() => {
     if (!match) return
     const inningsKey = match.status === 'innings1' ? 'innings1' : 'innings2'
@@ -601,15 +541,34 @@ export default function ScoringScreen() {
     if (!bowlerName && inn?.bowlingStats?.length) setBowlerName(inn.bowlingStats.slice(-1)[0].name)
   }, [match])
 
+  // Alert to set players if missing when match starts
+  useEffect(() => {
+    if (!match || match.status === 'setup' || match.status === 'completed') return
+    const timer = setTimeout(() => {
+      if (!striker || !nonStriker || !bowlerName) {
+        const missing = []
+        if (!striker) missing.push('Striker')
+        if (!nonStriker) missing.push('Non-Striker')
+        if (!bowlerName) missing.push('Bowler')
+        Alert.alert(
+          '⚠️ Players Not Set',
+          `Please set: ${missing.join(', ')} before recording balls.`,
+          [{ text: 'OK', style: 'default' }]
+        )
+      }
+    }, 800)
+    return () => clearTimeout(timer)
+  }, [match?._id])
+
   if (fetching) return (
     <View style={[S.root, { alignItems: 'center', justifyContent: 'center' }]}>
-      <ActivityIndicator color={T.red} size="large" />
+      <ActivityIndicator color={T.accent} size="large" />
     </View>
   )
   if (error || !match) return (
     <View style={[S.root, { alignItems: 'center', justifyContent: 'center', padding: 40 }]}>
-      <Text style={{ color: T.red, fontSize: 16, marginBottom: 20 }}>{error || 'Match not found'}</Text>
-      <Pressable android_ripple={{ color: "rgba(255,255,255,0.12)" }} onPress={() => navigation.goBack()} style={{ padding: 12, backgroundColor: T.redDim, borderRadius: 10 }}>
+      <Text style={{ color: T.accent, fontSize: 16, marginBottom: 20 }}>{error || 'Match not found'}</Text>
+      <Pressable android_ripple={{ color: "rgba(255,255,255,0.12)" }} onPress={() => navigation.goBack()} style={{ padding: 12, backgroundColor: T.accentDim, borderRadius: 10 }}>
         <Text style={{ color: T.text, fontWeight: '700' }}>← Go Back</Text>
       </Pressable>
     </View>
@@ -625,19 +584,10 @@ export default function ScoringScreen() {
 
   const battingTeamPlayers = innings.battingTeam === match.team1 ? match.team1Players : match.team2Players
   const bowlingTeamPlayers = innings.battingTeam === match.team1 ? match.team2Players : match.team1Players
+  const allPlayerNames     = allPlayers.map(p => p.name)
 
-  // ✅ extract names from full player objects
-  const allPlayerNames = allPlayers.map(p => p.name)
-  const knownBatters = [...new Set([
-    ...(battingTeamPlayers ?? []),
-    ...(innings.battingStats?.map((p: any) => p.name) ?? []),
-    ...allPlayerNames,
-  ])].filter(Boolean) as string[]
-  const knownBowlers = [...new Set([
-    ...(bowlingTeamPlayers ?? []),
-    ...(innings.bowlingStats?.map((p: any) => p.name) ?? []),
-    ...allPlayerNames,
-  ])].filter(Boolean) as string[]
+  const knownBatters = [...new Set([...(battingTeamPlayers ?? []), ...(innings.battingStats?.map((p: any) => p.name) ?? []), ...allPlayerNames])].filter(Boolean) as string[]
+  const knownBowlers = [...new Set([...(bowlingTeamPlayers ?? []), ...(innings.bowlingStats?.map((p: any) => p.name) ?? []), ...allPlayerNames])].filter(Boolean) as string[]
   const existingBowlers = (innings.bowlingStats?.map((p: any) => p.name) ?? []) as string[]
 
   const legalBalls   = (innings.ballByBall ?? []).filter((b: Ball) => !b.isWide && !b.isNoBall)
@@ -654,22 +604,30 @@ export default function ScoringScreen() {
     }
   }
   const currentOverBalls = overBallNum === 0 ? [] : thisBalls
-  const overRuns  = currentOverBalls.reduce((s: number, b: Ball) => s + (b.runs ?? 0), 0)
-  const overWkts  = currentOverBalls.filter((b: Ball) => b.isWicket).length
+  const overRuns = currentOverBalls.reduce((s: number, b: Ball) => s + (b.runs ?? 0), 0)
+  const overWkts = currentOverBalls.filter((b: Ball) => b.isWicket).length
 
   const strikerStats    = innings.battingStats?.find((p: any) => p.name === striker)
   const nonStrikerStats = innings.battingStats?.find((p: any) => p.name === nonStriker)
   const bowlerStats     = innings.bowlingStats?.find((p: any) => p.name === bowlerName)
   const okEnabled       = runs !== null && !loading
 
-  // ── POST ball to API ──────────────────────────────────────────────────────
-const postBall = async (ballData: any) => {
+  const postBall = async (ballData: any) => {
+    // Validate players set
+    if (!striker || !nonStriker || !bowlerName) {
+      const missing = []
+      if (!striker) missing.push('Striker')
+      if (!nonStriker) missing.push('Non-Striker')
+      if (!bowlerName) missing.push('Bowler')
+      Alert.alert('⚠️ Players Not Set', `Please set: ${missing.join(', ')} first.`, [{ text: 'OK' }])
+      return
+    }
     try {
       setLoading(true)
-      const token = await getToken()
+      const token    = await getToken()
       const deviceId = await AsyncStorage.getItem('@crickyworld:deviceId').catch(() => null)
-      const body = token ? ballData : { ...ballData, deviceId }
-      const res = await fetch(apiUrl(`/api/matches/${id}/ball`), {
+      const body     = token ? ballData : { ...ballData, deviceId }
+      const res      = await fetch(apiUrl(`/api/matches/${id}/ball`), {
         method: 'POST', headers: jsonHeaders(token), body: JSON.stringify(body)})
       if (!res.ok) throw new Error('Failed to record ball')
       const data = await res.json()
@@ -684,18 +642,13 @@ const postBall = async (ballData: any) => {
   const submitBall = (ballData: any, nextBatsman: string | null) => {
     const beforeLegal = legalBalls.length
     const isLegal     = !ballData.isWide && !ballData.isNoBall
-
     postBall(ballData)
-
-    if (isLegal && ballData.runs % 2 !== 0) {
-      setStriker(nonStriker); setNonStriker(striker)
-    }
+    if (isLegal && ballData.runs % 2 !== 0) { setStriker(nonStriker); setNonStriker(striker) }
     if (ballData.isWicket && nextBatsman) setStriker(nextBatsman)
     if (isLegal && (beforeLegal + 1) % 6 === 0) {
       const tmp = striker; setStriker(nonStriker); setNonStriker(tmp)
       setOverChangeOpen(true)
     }
-
     setRuns(null); setWicket(false); setWicketType('Wicket')
     setAssistName(''); setWide(false); setNoBall(false)
   }
@@ -707,8 +660,8 @@ const postBall = async (ballData: any) => {
       wicketType: wicket ? wicketType : null,
       assistPlayer: wicket && ASSIST_TYPES.includes(wicketType) ? assistName : null,
       isWide: wide, isNoBall: noBall,
-      extraRuns: wide || noBall ? (match.wideRuns ?? match.noBallRuns ?? 1) : 0,
-      batsmanName: striker, bowlerName}
+      extraRuns: wide || noBall ? 1 : 0,
+      batsmanName: striker, bowlerName }
     if (wicket) { setPendingBall(ball); setNewBatsmanOpen(true) }
     else submitBall(ball, null)
   }
@@ -716,13 +669,28 @@ const postBall = async (ballData: any) => {
   const handleUndo = async () => {
     try {
       setLoading(true)
-      const token = await getToken()
-const deviceId = await AsyncStorage.getItem('@crickyworld:deviceId').catch(() => null)
-const undoBody = token ? {} : { deviceId }
-const res = await fetch(apiUrl(`/api/matches/${id}/undo`), { method: 'POST', headers: jsonHeaders(token), body: JSON.stringify(undoBody) })
+      const token    = await getToken()
+      const deviceId = await AsyncStorage.getItem('@crickyworld:deviceId').catch(() => null)
+      const undoBody = token ? {} : { deviceId }
+      const res      = await fetch(apiUrl(`/api/matches/${id}/undo`), { method: 'POST', headers: jsonHeaders(token), body: JSON.stringify(undoBody) })
       if (!res.ok) throw new Error()
       setMatch(await res.json())
     } catch { Alert.alert('Undo', 'Nothing to undo') }
+    finally { setLoading(false) }
+  }
+
+  const handleUpdateOvers = async (newOvers: number) => {
+    try {
+      setLoading(true)
+      const token    = await getToken()
+      const deviceId = await AsyncStorage.getItem('@crickyworld:deviceId').catch(() => null)
+      const body     = token ? { overs: newOvers } : { overs: newOvers, deviceId }
+      const res      = await fetch(apiUrl(`/api/matches/${id}/overs`), { method: 'PATCH', headers: jsonHeaders(token), body: JSON.stringify(body) })
+      if (!res.ok) throw new Error()
+      setMatch(await res.json())
+      setUpdateOversOpen(false)
+      Alert.alert('✅ Updated', `Match overs updated to ${newOvers}`)
+    } catch { Alert.alert('Error', 'Failed to update overs') }
     finally { setLoading(false) }
   }
 
@@ -732,11 +700,11 @@ const res = await fetch(apiUrl(`/api/matches/${id}/undo`), { method: 'POST', hea
       { text: 'End Innings', style: 'destructive', onPress: async () => {
         try {
           setLoading(true)
-          const token = await getToken()
+          const token    = await getToken()
+          const deviceId = await AsyncStorage.getItem('@crickyworld:deviceId').catch(() => null)
           const newStatus = match.status === 'innings1' ? 'innings2' : 'completed'
-          const res = await fetch(apiUrl(`/api/matches/${id}`), {
-            method: 'PUT', headers: jsonHeaders(token),
-            body: JSON.stringify({ ...match, status: newStatus })})
+          const body      = token ? { ...match, status: newStatus } : { ...match, status: newStatus, deviceId }
+          const res       = await fetch(apiUrl(`/api/matches/${id}`), { method: 'PUT', headers: jsonHeaders(token), body: JSON.stringify(body) })
           if (!res.ok) throw new Error()
           setMatch(await res.json())
         } catch { await fetchMatch() }
@@ -755,26 +723,27 @@ const res = await fetch(apiUrl(`/api/matches/${id}/undo`), { method: 'POST', hea
     <View style={S.root}>
       <StatusBar barStyle="light-content" backgroundColor={T.bg} />
 
-      {/* ── HEADER ── */}
+      {/* HEADER */}
       <View style={S.header}>
         <Pressable android_ripple={{ color: "rgba(255,255,255,0.12)" }} onPress={() => navigation.goBack()} style={S.backBtn}>
           <Text style={{ color: T.text2, fontSize: 18, fontWeight: '600' }}>←</Text>
         </Pressable>
         <View style={{ flex: 1 }}>
           <Text style={S.headerTitle}>{match.team1} vs {match.team2}</Text>
-          <Text style={S.headerSub}>{match.overs} overs · {match.status === 'completed' ? '✅ Completed' : '🟢 Live'}</Text>
+          <Text style={S.headerSub}>
+            {match.overs} overs · {match.status === 'completed' ? '✅ Done' : '🔴 Live'}
+          </Text>
         </View>
         <Pressable android_ripple={{ color: "rgba(255,255,255,0.12)" }} onPress={handleUndo} disabled={loading} style={S.undoBtn}>
           <Text style={S.undoBtnTxt}>UNDO</Text>
         </Pressable>
       </View>
 
-      {/* ── CONTENT ── */}
       <View style={{ flex: 1 }}>
         {tab === 'scoring' && (
           <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingBottom: 8 }} keyboardShouldPersistTaps="handled">
 
-            {/* Score header */}
+            {/* Score card */}
             <View style={S.scoreCard}>
               <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                 <View>
@@ -788,17 +757,15 @@ const res = await fetch(apiUrl(`/api/matches/${id}/undo`), { method: 'POST', hea
                 <View style={{ alignItems: 'flex-end' }}>
                   <Text style={S.rateLabel}>CRR</Text>
                   <Text style={S.rateVal}>{calcCRR(innings.runs, innings.balls)}</Text>
-                  {isInnings2 && target ? (
-                    <>
-                      <Text style={[S.rateLabel, { color: T.gold }]}>RRR</Text>
-                      <Text style={[S.rateVal, { color: T.gold, fontSize: 18 }]}>{calcRRR(target, innings.runs, innings.balls, match.overs)}</Text>
-                    </>
-                  ) : null}
+                  {isInnings2 && target && <>
+                    <Text style={[S.rateLabel, { color: T.gold }]}>RRR</Text>
+                    <Text style={[S.rateVal, { color: T.gold, fontSize: 18 }]}>{calcRRR(target, innings.runs, innings.balls, match.overs)}</Text>
+                  </>}
                 </View>
               </View>
             </View>
 
-            {/* Batter/Bowler card */}
+            {/* Player card */}
             <View style={S.playerCard}>
               <View style={S.playerCardHeader}>
                 <Text style={[S.colHdr, { flex: 1, textAlign: 'left' }]}>BATTER</Text>
@@ -809,7 +776,7 @@ const res = await fetch(apiUrl(`/api/matches/${id}/undo`), { method: 'POST', hea
                 <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 7 }}>
                   <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: T.accent }} />
                   <Text style={[S.playerName, !striker && { color: T.muted, fontSize: 13 }]} numberOfLines={1}>
-                    {striker || 'Tap to set striker ✎'}{striker ? ' *' : ''}
+                    {striker || '⚠️ Tap to set striker'}{striker ? ' *' : ''}
                   </Text>
                 </View>
                 <Text style={S.statCell}>{strikerStats?.runs ?? 0}</Text>
@@ -821,7 +788,7 @@ const res = await fetch(apiUrl(`/api/matches/${id}/undo`), { method: 'POST', hea
                 <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 7 }}>
                   <View style={{ width: 7, height: 7, borderRadius: 4, backgroundColor: T.muted }} />
                   <Text style={[S.playerName, { color: T.text2 }, !nonStriker && { color: T.muted, fontSize: 13 }]} numberOfLines={1}>
-                    {nonStriker || 'Tap to set non-striker ✎'}
+                    {nonStriker || '⚠️ Tap to set non-striker'}
                   </Text>
                 </View>
                 <Text style={S.statCell}>{nonStrikerStats?.runs ?? 0}</Text>
@@ -833,12 +800,12 @@ const res = await fetch(apiUrl(`/api/matches/${id}/undo`), { method: 'POST', hea
                 <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 7 }}>
                   <Text style={{ fontSize: 10, color: T.orange, fontWeight: '800' }}>BOWL</Text>
                   <Text style={[S.playerName, { color: T.orange }, !bowlerName && { color: T.muted, fontSize: 13 }]} numberOfLines={1}>
-                    {bowlerName || 'Tap to set bowler ✎'}
+                    {bowlerName || '⚠️ Tap to set bowler'}
                   </Text>
                 </View>
                 <Text style={S.statCell}>{fmtOv(bowlerStats?.balls ?? 0)}</Text>
                 <Text style={S.statCell}>{bowlerStats?.runs ?? 0}</Text>
-                <Text style={[S.statCell, { color: T.red, fontWeight: '700' }]}>{bowlerStats?.wickets ?? 0}W</Text>
+                <Text style={[S.statCell, { color: T.accent, fontWeight: '700' }]}>{bowlerStats?.wickets ?? 0}W</Text>
               </Pressable>
             </View>
 
@@ -846,9 +813,7 @@ const res = await fetch(apiUrl(`/api/matches/${id}/undo`), { method: 'POST', hea
             <View style={S.overCard}>
               <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8 }}>
                 <Text style={{ fontSize: 10, color: T.muted, fontWeight: '800', letterSpacing: 1 }}>THIS OVER · {fmtOv(innings.balls)}</Text>
-                {currentOverBalls.length > 0 ? (
-                  <Text style={{ fontSize: 11, color: T.subtext, fontWeight: '700' }}>{overRuns}R{overWkts > 0 ? ` · ${overWkts}W` : ''}</Text>
-                ) : null}
+                {currentOverBalls.length > 0 && <Text style={{ fontSize: 11, color: T.subtext, fontWeight: '700' }}>{overRuns}R{overWkts > 0 ? ` · ${overWkts}W` : ''}</Text>}
               </View>
               <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, minHeight: 30 }}>
                 {currentOverBalls.length === 0
@@ -861,9 +826,9 @@ const res = await fetch(apiUrl(`/api/matches/${id}/undo`), { method: 'POST', hea
             <View style={S.extrasRow}>
               {[{ key: 'wide', label: 'Wide', active: wide, toggle: () => setWide(v => !v), color: T.sky },
                 { key: 'noBall', label: 'No Ball', active: noBall, toggle: () => setNoBall(v => !v), color: T.orange }].map(e => (
-                <Pressable android_ripple={{ color: "rgba(255,255,255,0.12)" }} key={e.key} onPress={e.toggle} style={[S.extraBtn, e.active && { backgroundColor: e.color + '18' }]}>
-                  <View style={[S.extraCheck, { borderColor: e.active ? e.color : T.muted }, e.active && { backgroundColor: e.color + '33' }]}>
-                    {e.active ? <Text style={{ fontSize: 13, color: e.color }}>✓</Text> : null}
+                <Pressable android_ripple={{ color: "rgba(255,255,255,0.12)" }} key={e.key} onPress={e.toggle} style={[S.extraBtn, e.active && { backgroundColor: e.color+'18' }]}>
+                  <View style={[S.extraCheck, { borderColor: e.active ? e.color : T.muted }, e.active && { backgroundColor: e.color+'33' }]}>
+                    {e.active && <Text style={{ fontSize: 13, color: e.color }}>✓</Text>}
                   </View>
                   <Text style={[S.extraLabel, { color: e.active ? e.color : T.subtext }]}>{e.label}</Text>
                 </Pressable>
@@ -874,8 +839,8 @@ const res = await fetch(apiUrl(`/api/matches/${id}/undo`), { method: 'POST', hea
             <View style={S.runRow}>
               {[0,1,2,3,4,5,6].map(r => {
                 const sel = runs === r
-                const clr = r === 4 ? T.accent : r === 6 ? T.purple : T.red
-                const dim = r === 4 ? T.accentDim : r === 6 ? T.purpleDim : T.redDim
+                const clr = r === 4 ? T.green : r === 6 ? T.purple : T.accent
+                const dim = r === 4 ? T.greenDim : r === 6 ? T.purpleDim : T.accentDim
                 return (
                   <Pressable android_ripple={{ color: "rgba(255,255,255,0.12)" }} key={r} onPress={() => setRuns(r)}
                     style={[S.runBtn, sel && { backgroundColor: dim, borderColor: clr }]}>
@@ -888,126 +853,105 @@ const res = await fetch(apiUrl(`/api/matches/${id}/undo`), { method: 'POST', hea
             {/* Wicket + OK */}
             <View style={{ flexDirection: 'row', gap: 8, marginHorizontal: 12, marginTop: 8 }}>
               <Pressable android_ripple={{ color: "rgba(255,255,255,0.12)" }} onPress={() => { setWicket(w => !w); if (!wicket && runs === null) setRuns(0) }}
-                style={[S.wicketBtn, wicket && { backgroundColor: 'rgba(127,29,29,0.7)', borderColor: T.red }]}>
+                style={[S.wicketBtn, wicket && { backgroundColor: 'rgba(100,0,0,0.7)', borderColor: T.accent }]}>
                 <Text style={{ fontSize: 18 }}>{wicket ? '💀' : '🏏'}</Text>
-                <Text style={[S.wicketBtnTxt, wicket && { color: T.red }]}>{wicket ? 'W ON' : 'WICKET'}</Text>
+                <Text style={[S.wicketBtnTxt, wicket && { color: T.accent }]}>{wicket ? 'W ON' : 'WICKET'}</Text>
               </Pressable>
-
-              <Pressable android_ripple={{ color: "rgba(255,255,255,0.12)" }} onPress={() => { if (wicket) setShowWktMenu(v => !v) }} style={[S.wicketTypeBtn, wicket && { backgroundColor: 'rgba(127,29,29,0.25)', borderColor: T.red + '44' }]}>
-                <Text style={{ color: wicket ? T.red : T.text2, fontWeight: '700', fontSize: 14 }}>{wicketType}</Text>
-                {wicket ? <Text style={{ color: T.red, fontSize: 10 }}>▼</Text> : null}
+              <Pressable android_ripple={{ color: "rgba(255,255,255,0.12)" }} onPress={() => { if (wicket) setShowWktMenu(v => !v) }} style={[S.wicketTypeBtn, wicket && { backgroundColor: 'rgba(100,0,0,0.25)', borderColor: T.accent+'44' }]}>
+                <Text style={{ color: wicket ? T.accent : T.text2, fontWeight: '700', fontSize: 14 }}>{wicketType}</Text>
+                {wicket && <Text style={{ color: T.accent, fontSize: 10 }}>▼</Text>}
               </Pressable>
-
               <Pressable android_ripple={{ color: "rgba(255,255,255,0.12)" }} onPress={handleOK} disabled={!okEnabled}
-                style={[S.okBtn, okEnabled && { backgroundColor: T.accent, borderColor: T.red, shadowColor: '#cc0000', shadowOpacity: 0.5, shadowOffset: { width: 0, height: 4 }, shadowRadius: 10, elevation: 6 }]}>
+                style={[S.okBtn, okEnabled && { backgroundColor: T.accent, shadowColor: '#cc0000', shadowOpacity: 0.6, shadowOffset: { width: 0, height: 4 }, shadowRadius: 10, elevation: 8 }]}>
                 {loading ? <ActivityIndicator color={T.text} size="small" /> : <Text style={[S.okBtnTxt, { color: okEnabled ? T.text : T.muted }]}>OK</Text>}
               </Pressable>
             </View>
 
-            {/* Wicket type dropdown */}
-            {showWktMenu && wicket ? (
+            {/* Wicket dropdown */}
+            {showWktMenu && wicket && (
               <View style={S.wktDropdown}>
                 {WICKET_TYPES.map(type => (
                   <Pressable android_ripple={{ color: "rgba(255,255,255,0.12)" }} key={type} onPress={() => { setWicketType(type); setAssistName(''); setShowWktMenu(false) }}
-                    style={[S.wktItem, wicketType === type && { backgroundColor: 'rgba(255,68,68,0.15)' }]}>
-                    <Text style={{ color: wicketType === type ? T.red : T.text2, fontWeight: '700', fontSize: 15 }}>{type}</Text>
+                    style={[S.wktItem, wicketType === type && { backgroundColor: 'rgba(204,0,0,0.15)' }]}>
+                    <Text style={{ color: wicketType === type ? T.accent : T.text2, fontWeight: '700', fontSize: 15 }}>{type}</Text>
                   </Pressable>
                 ))}
               </View>
-            ) : null}
+            )}
 
             {/* Assist field */}
-            {wicket && ASSIST_TYPES.includes(wicketType) ? (
-              <View style={{ marginHorizontal: 12, marginTop: 6, backgroundColor: 'rgba(127,29,29,0.12)', borderRadius: 11, padding: 10, borderWidth: 1, borderColor: 'rgba(255,68,68,0.15)' }}>
-                <Text style={{ fontSize: 10, color: T.red, fontWeight: '800', letterSpacing: 1, marginBottom: 8 }}>
+            {wicket && ASSIST_TYPES.includes(wicketType) && (
+              <View style={{ marginHorizontal: 12, marginTop: 6, backgroundColor: 'rgba(100,0,0,0.12)', borderRadius: 11, padding: 10, borderWidth: 1, borderColor: 'rgba(204,0,0,0.15)' }}>
+                <Text style={{ fontSize: 10, color: T.accent, fontWeight: '800', letterSpacing: 1, marginBottom: 8 }}>
                   {wicketType.startsWith('RunOut') ? '⚡ RUN OUT BY' : wicketType === 'Stumped' ? '🧤 STUMPED BY' : '🙌 CAUGHT BY'}
                 </Text>
-                <TextInput value={assistName} onChangeText={setAssistName}
-                  placeholder="Fielder / keeper name…" placeholderTextColor={T.muted}
-                  style={{ backgroundColor: T.surface, borderRadius: 9, padding: 8, paddingHorizontal: 12, color: T.text, fontSize: 13, borderWidth: 1, borderColor: 'rgba(255,68,68,0.25)' }} />
-                {innings.bowlingStats?.length > 0 ? (
+                <TextInput value={assistName} onChangeText={setAssistName} placeholder="Fielder / keeper name…" placeholderTextColor={T.muted}
+                  style={{ backgroundColor: T.surface, borderRadius: 9, padding: 8, paddingHorizontal: 12, color: T.text, fontSize: 13, borderWidth: 1, borderColor: 'rgba(204,0,0,0.25)' }} />
+                {innings.bowlingStats?.length > 0 && (
                   <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
                     {innings.bowlingStats.map((p: any) => (
                       <Pressable android_ripple={{ color: "rgba(255,255,255,0.12)" }} key={p.name} onPress={() => setAssistName(p.name)}
-                        style={[{ paddingHorizontal: 10, paddingVertical: 5, borderRadius: 7, borderWidth: 1 }, assistName === p.name ? { backgroundColor: 'rgba(255,68,68,0.25)', borderColor: T.accent + '55' } : { backgroundColor: T.border2, borderColor: T.border }]}>
-                        <Text style={{ fontSize: 12, fontWeight: '700', color: assistName === p.name ? T.red : T.subtext }}>{p.name}</Text>
+                        style={[{ paddingHorizontal: 10, paddingVertical: 5, borderRadius: 7, borderWidth: 1 }, assistName === p.name ? { backgroundColor: 'rgba(204,0,0,0.25)', borderColor: T.accent+'55' } : { backgroundColor: T.border2, borderColor: T.border }]}>
+                        <Text style={{ fontSize: 12, fontWeight: '700', color: assistName === p.name ? T.accent : T.subtext }}>{p.name}</Text>
                       </Pressable>
                     ))}
                   </View>
-                ) : null}
+                )}
               </View>
-            ) : null}
+            )}
 
             {/* Action buttons */}
-            
             <View style={{ flexDirection: 'row', gap: 6, marginHorizontal: 12, marginTop: 8 }}>
               <Pressable android_ripple={{ color: "rgba(255,255,255,0.12)" }} onPress={() => { setStriker(nonStriker); setNonStriker(striker) }} style={S.actionBtn}>
-                <Text style={S.actionBtnTxt}>⇄ SWITCH BAT</Text>
+                <Text style={S.actionBtnTxt}>⇄ SWITCH</Text>
               </Pressable>
-              
-              <Pressable android_ripple={{ color: "rgba(255,255,255,0.12)" }} onPress={handleEndInnings} style={S.actionBtn}>
-                <Text style={S.actionBtnTxt}>END INNINGS</Text>
+              <Pressable android_ripple={{ color: "rgba(255,255,255,0.12)" }} onPress={() => setUpdateOversOpen(true)} style={[S.actionBtn, { borderColor: T.gold+'44' }]}>
+                <Text style={[S.actionBtnTxt, { color: T.gold }]}>⏱ OVERS</Text>
+              </Pressable>
+              <Pressable android_ripple={{ color: "rgba(255,255,255,0.12)" }} onPress={handleEndInnings} style={[S.actionBtn, { borderColor: T.accent+'44' }]}>
+                <Text style={[S.actionBtnTxt, { color: T.accent }]}>END INN</Text>
               </Pressable>
             </View>
 
           </ScrollView>
         )}
-        
 
         {tab === 'scorecard'  && <ScorecardTab  match={match} />}
         {tab === 'ballbyball' && <BallByBallTab match={match} />}
       </View>
 
-      {/* ── BOTTOM TABS ── */}
+      {/* Bottom tabs */}
       <View style={S.bottomTabs}>
         {TABS.map(t => (
           <Pressable android_ripple={{ color: "rgba(255,255,255,0.12)" }} key={t.key} onPress={() => setTab(t.key)} style={S.bottomTab}>
-            {tab === t.key ? <View style={S.bottomTabIndicator} /> : null}
+            {tab === t.key && <View style={S.bottomTabIndicator} />}
             <Text style={{ fontSize: 20 }}>{t.icon}</Text>
             <Text style={[S.bottomTabLabel, tab === t.key && { color: T.accent }]}>{t.label}</Text>
           </Pressable>
         ))}
       </View>
 
-      {/* ── MODALS ── */}
-      {/* ✅ all 3 pickers now pass allPlayerInfo for rich display */}
-      <PlayerPicker
-        visible={picker === 'striker'} onClose={() => setPicker(null)}
-        onSelect={n => { setStriker(n); setPicker(null) }}
-        title="SET STRIKER" accentColor={T.accent}
-        players={knownBatters} allPlayerInfo={allPlayers}
-      />
-      <PlayerPicker
-        visible={picker === 'nonStriker'} onClose={() => setPicker(null)}
-        onSelect={n => { setNonStriker(n); setPicker(null) }}
-        title="SET NON-STRIKER" accentColor={T.sky}
-        players={knownBatters} allPlayerInfo={allPlayers}
-      />
-      <PlayerPicker
-        visible={picker === 'bowler'} onClose={() => setPicker(null)}
-        onSelect={n => { setBowlerName(n); setPicker(null) }}
-        title="SET BOWLER" accentColor={T.orange}
-        players={knownBowlers} allPlayerInfo={allPlayers}
-      />
+      {/* Modals */}
+      <PlayerPicker visible={picker === 'striker'} onClose={() => setPicker(null)} onSelect={n => { setStriker(n); setPicker(null) }} title="SET STRIKER" accentColor={T.accent} players={knownBatters} allPlayerInfo={allPlayers} />
+      <PlayerPicker visible={picker === 'nonStriker'} onClose={() => setPicker(null)} onSelect={n => { setNonStriker(n); setPicker(null) }} title="SET NON-STRIKER" accentColor={T.sky} players={knownBatters} allPlayerInfo={allPlayers} />
+      <PlayerPicker visible={picker === 'bowler'} onClose={() => setPicker(null)} onSelect={n => { setBowlerName(n); setPicker(null) }} title="SET BOWLER" accentColor={T.orange} players={knownBowlers} allPlayerInfo={allPlayers} />
 
-      <NewBatsmanModal
-        visible={newBatsmanOpen} outName={striker} wicketType={pendingBall?.wicketType}
+      <NewBatsmanModal visible={newBatsmanOpen} outName={striker} wicketType={pendingBall?.wicketType}
         players={knownBatters.filter(n => n !== striker && n !== nonStriker)}
-        onConfirm={name => { setNewBatsmanOpen(false); submitBall(pendingBall, name); setPendingBall(null) }}
-      />
+        onConfirm={name => { setNewBatsmanOpen(false); submitBall(pendingBall, name); setPendingBall(null) }} />
 
-      <BowlerChangeModal
-        visible={overChangeOpen}
+      <BowlerChangeModal visible={overChangeOpen}
         players={existingBowlers.length > 0 ? existingBowlers : knownBowlers}
         lastBowler={bowlerName}
         onConfirm={name => { setBowlerName(name); setOverChangeOpen(false) }}
-        onSkip={() => setOverChangeOpen(false)}
-      />
+        onSkip={() => setOverChangeOpen(false)} />
+
+      <UpdateOversModal visible={updateOversOpen} currentOvers={match.overs}
+        onConfirm={handleUpdateOvers} onClose={() => setUpdateOversOpen(false)} />
     </View>
   )
 }
 
-// ── Styles ────────────────────────────────────────────────────────────────────
 const S = StyleSheet.create({
   root: { flex: 1, backgroundColor: T.bg },
 
@@ -1018,13 +962,13 @@ const S = StyleSheet.create({
   undoBtn:     { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8, backgroundColor: T.border2, borderWidth: 1, borderColor: T.border },
   undoBtnTxt:  { color: T.text2, fontWeight: '700', fontSize: 13, letterSpacing: 1 },
 
-  scoreCard:  { margin: 10, marginBottom: 0, backgroundColor: '#0f1929', borderWidth: 1, borderColor: T.border, borderRadius: 14, padding: 12 },
+  scoreCard:  { margin: 10, marginBottom: 0, backgroundColor: '#120000', borderWidth: 1, borderColor: T.accentDim, borderRadius: 14, padding: 12 },
   scoreSub:   { fontSize: 11, color: T.subtext, fontWeight: '800', letterSpacing: 0.5, marginBottom: 2 },
-  scoreMain:  { fontSize: 38, fontWeight: '700', color: T.text, lineHeight: 40, fontVariant: ['tabular-nums'] },
-  scoreWkt:   { fontSize: 24, color: T.subtext, fontVariant: ['tabular-nums'] },
+  scoreMain:  { fontSize: 42, fontWeight: '700', color: T.text, lineHeight: 44, fontVariant: ['tabular-nums'] },
+  scoreWkt:   { fontSize: 26, color: T.subtext, fontVariant: ['tabular-nums'] },
   scoreOv:    { fontSize: 11, color: T.subtext, marginTop: 3 },
-  rateLabel:  { fontSize: 10, color: T.red, fontWeight: '800', letterSpacing: 1, textAlign: 'right' },
-  rateVal:    { fontSize: 26, fontWeight: '700', color: T.text, textAlign: 'right', fontVariant: ['tabular-nums'] },
+  rateLabel:  { fontSize: 10, color: T.accent, fontWeight: '800', letterSpacing: 1, textAlign: 'right' },
+  rateVal:    { fontSize: 28, fontWeight: '700', color: T.text, textAlign: 'right', fontVariant: ['tabular-nums'] },
 
   playerCard:       { marginHorizontal: 12, marginTop: 8, backgroundColor: T.card, borderWidth: 1, borderColor: T.border, borderRadius: 12, overflow: 'hidden' },
   playerCardHeader: { flexDirection: 'row', paddingHorizontal: 14, paddingVertical: 4, backgroundColor: T.border2, borderBottomWidth: 1, borderBottomColor: T.border2 },
@@ -1041,15 +985,15 @@ const S = StyleSheet.create({
   extraLabel: { fontSize: 11, fontWeight: '800' },
 
   runRow:    { flexDirection: 'row', gap: 6, marginHorizontal: 12, marginTop: 8 },
-  runBtn:    { flex: 1, height: 46, borderRadius: 12, backgroundColor: T.card, borderWidth: 2, borderColor: T.muted, alignItems: 'center', justifyContent: 'center' },
-  runBtnTxt: { fontSize: 18, fontWeight: '700', fontVariant: ['tabular-nums'] },
+  runBtn:    { flex: 1, height: 50, borderRadius: 12, backgroundColor: T.card, borderWidth: 2, borderColor: T.muted, alignItems: 'center', justifyContent: 'center' },
+  runBtnTxt: { fontSize: 20, fontWeight: '700', fontVariant: ['tabular-nums'] },
 
   wicketBtn:     { width: 82, borderRadius: 11, backgroundColor: T.card, borderWidth: 2, borderColor: T.muted, alignItems: 'center', justifyContent: 'center', padding: 8, gap: 2 },
   wicketBtnTxt:  { color: T.subtext, fontSize: 13, fontWeight: '700' },
   wicketTypeBtn: { flex: 1, minHeight: 58, borderRadius: 11, backgroundColor: T.card, borderWidth: 2, borderColor: T.muted, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 14 },
   okBtn:         { width: 64, borderRadius: 11, backgroundColor: T.card, borderWidth: 2, borderColor: T.muted, alignItems: 'center', justifyContent: 'center' },
-  okBtnTxt:      { fontSize: 20, fontWeight: '800' },
-  wktDropdown:   { marginHorizontal: 12, marginTop: 4, backgroundColor: T.surface, borderWidth: 1, borderColor: 'rgba(255,68,68,0.3)', borderRadius: 12, overflow: 'hidden', zIndex: 300 },
+  okBtnTxt:      { fontSize: 22, fontWeight: '800' },
+  wktDropdown:   { marginHorizontal: 12, marginTop: 4, backgroundColor: T.surface, borderWidth: 1, borderColor: 'rgba(204,0,0,0.3)', borderRadius: 12, overflow: 'hidden', zIndex: 300 },
   wktItem:       { paddingVertical: 11, paddingHorizontal: 16, borderBottomWidth: 1, borderBottomColor: T.border2 },
 
   actionBtn:    { flex: 1, height: 40, borderRadius: 10, backgroundColor: T.card, borderWidth: 1, borderColor: T.border, alignItems: 'center', justifyContent: 'center' },
