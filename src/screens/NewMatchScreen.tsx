@@ -1,7 +1,8 @@
 // src/screens/NewMatchScreen.tsx
 // ─────────────────────────────────────────────────────────────────────────────
 // CrickyWorld — New Match
-// Sends deviceId alongside match data so backend tags match.createdBy = user
+// FIX: Sends status:'innings1' + innings1.battingTeam + innings2.battingTeam
+//      so ScoringScreen always knows exactly which team bats first.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import React, { useState, useRef } from 'react'
@@ -81,21 +82,38 @@ export default function NewMatchScreen() {
     Animated.spring(submitScale, { toValue: 0.96, useNativeDriver: true, speed: 50 }).start()
     try {
       const token    = await getToken()
-      const deviceId = await getDeviceId()  // tag match with device owner
+      const deviceId = await getDeviceId()
+
+      const t1 = team1.trim()
+      const t2 = team2.trim()
+
+      // ── FIX: team1 always bats first; set both innings battingTeam upfront ──
+      // This is the key fix: innings1.battingTeam = t1, innings2.battingTeam = t2
+      // The server also does this, but sending it from the client ensures it's
+      // set even if the server is an older version.
       const res = await fetch(apiUrl('/api/matches'), {
         method:  'POST',
         headers: jsonHeaders(token),
         body:    JSON.stringify({
-          team1:        team1.trim(),
-          team2:        team2.trim(),
+          team1:        t1,
+          team2:        t2,
           overs:        Number(overs),
-          tossWinner:   team1.trim(),
-          battingFirst: team1.trim(),
+          tossWinner:   t1,
+          battingFirst: t1,           // team1 always bats first
+          status:       'innings1',   // FIX: start in innings1 immediately
+          isLive:       true,
           noBallRuns,
           wideRuns,
           team1Players: [],
           team2Players: [],
-          deviceId,   // backend sets createdBy from this or from JWT
+          // FIX: explicitly set battingTeam for BOTH innings
+          innings1: {
+            battingTeam: t1,          // team1 bats in innings 1
+          },
+          innings2: {
+            battingTeam: t2,          // team2 bats in innings 2
+          },
+          deviceId,
         }),
       })
       const data = await res.json() as { _id?: string; message?: string }

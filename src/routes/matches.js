@@ -1,4 +1,3 @@
-//C:\Users\ajayb\OneDrive\Desktop\CrickyWorldApp-main\src\routes\matches.js 
 const express = require('express')
 const router  = express.Router()
 const Match   = require('../models/Match')
@@ -50,14 +49,39 @@ router.get('/:id', flexAuth, async (req, res) => {
 })
 
 // ── POST /api/matches ─────────────────────────────────────────────────────────
+// FIX: Always initialize innings1.battingTeam = battingFirst (= team1)
+//      and innings2.battingTeam = team2, and set status = 'innings1'
+//      so ScoringScreen always knows which team bats first.
 router.post('/', flexAuth, async (req, res) => {
   try {
     const matchData = { ...req.body }
+
+    // Tag match to user/device
     if (req.user.type === 'user') {
       matchData.createdBy = req.user.id
     } else {
       matchData.deviceId = req.user.id
     }
+
+    // ── FIX: Derive battingFirst from request (defaults to team1) ─────────────
+    const battingFirst  = matchData.battingFirst  || matchData.team1
+    const team1         = matchData.team1
+    const team2         = matchData.team2
+    const battingSecond = battingFirst === team1 ? team2 : team1
+
+    // ── FIX: Always initialize innings battingTeam fields ─────────────────────
+    matchData.battingFirst = battingFirst
+    matchData.status       = 'innings1'   // match starts immediately in innings1
+    matchData.isLive       = true
+    matchData.innings1 = {
+      ...(matchData.innings1 || {}),
+      battingTeam: battingFirst,           // team that bats first
+    }
+    matchData.innings2 = {
+      ...(matchData.innings2 || {}),
+      battingTeam: battingSecond,          // team that bats second
+    }
+
     const match = new Match(matchData)
     await match.save()
     res.status(201).json(match)
@@ -75,6 +99,17 @@ router.post('/:id/ball', flexAuth, async (req, res) => {
       : { _id: req.params.id }
     const match = await Match.findOne(query)
     if (!match) return res.status(404).json({ message: 'Match not found' })
+
+    // ── FIX: Repair battingTeam if it was blank (old matches created before fix) ─
+    if (!match.innings1.battingTeam) {
+      match.innings1.battingTeam = match.battingFirst || match.team1
+      match.markModified('innings1')
+    }
+    if (!match.innings2.battingTeam) {
+      const bt1 = match.innings1.battingTeam
+      match.innings2.battingTeam = bt1 === match.team1 ? match.team2 : match.team1
+      match.markModified('innings2')
+    }
 
     const inningsKey = match.status === 'innings1' ? 'innings1' : 'innings2'
     const innings = match[inningsKey]
@@ -119,12 +154,11 @@ router.post('/:id/ball', flexAuth, async (req, res) => {
     if (innings.balls >= totalBalls || innings.wickets >= maxWickets) {
       if (match.status === 'innings1') {
         match.status = 'innings2'
-        match.innings2.battingTeam = match.innings1.battingTeam === match.team1 ? match.team2 : match.team1
+        // innings2.battingTeam is already set; no need to re-derive
       } else {
         match.status = 'completed'
         match.isCompleted = true
         match.isLive = false
-        // Calculate result
         const inn1 = match.innings1, inn2 = match.innings2
         if (inn2.runs > inn1.runs) {
           const wktsLeft = 10 - inn2.wickets
@@ -136,7 +170,6 @@ router.post('/:id/ball', flexAuth, async (req, res) => {
         }
       }
     } else {
-      // Check if chasing team won
       if (match.status === 'innings2') {
         const target = match.innings1.runs + 1
         if (innings.runs >= target) {
@@ -176,7 +209,6 @@ router.post('/:id/undo', flexAuth, async (req, res) => {
     const lastBall = innings.ballByBall.pop()
     const { runs = 0, isWide, isNoBall, isWicket, batsmanName, bowlerName, extraRuns = 0 } = lastBall
 
-    // Reverse batting stats
     if (batsmanName) {
       const bat = innings.battingStats.find(p => p.name === batsmanName)
       if (bat) {
@@ -188,7 +220,6 @@ router.post('/:id/undo', flexAuth, async (req, res) => {
       }
     }
 
-    // Reverse bowling stats
     if (bowlerName) {
       const bowl = innings.bowlingStats.find(p => p.name === bowlerName)
       if (bowl) {
@@ -201,7 +232,6 @@ router.post('/:id/undo', flexAuth, async (req, res) => {
       }
     }
 
-    // Reverse innings totals
     innings.runs -= (runs + extraRuns)
     if (!isWide && !isNoBall) { innings.balls -= 1; innings.wickets -= isWicket ? 1 : 0 }
     innings.overs = `${Math.floor(innings.balls / 6)}.${innings.balls % 6}`
@@ -245,9 +275,21 @@ router.put('/:id', flexAuth, async (req, res) => {
     const query = req.user.type === 'user'
       ? { _id: req.params.id, createdBy: req.user.id }
       : { _id: req.params.id }
+
+    const updateData = { ...req.body }
+
+    // ── FIX: When transitioning to innings2, ensure innings2.battingTeam is set ─
+    if (updateData.status === 'innings2') {
+      const existing = await Match.findOne(query)
+      if (existing && !existing.innings2?.battingTeam) {
+        const bt1 = existing.innings1?.battingTeam || existing.battingFirst || existing.team1
+        updateData['innings2.battingTeam'] = bt1 === existing.team1 ? existing.team2 : existing.team1
+      }
+    }
+
     const match = await Match.findOneAndUpdate(
       query,
-      { ...req.body },
+      { ...updateData },
       { new: true, runValidators: true }
     )
     if (!match) return res.status(404).json({ message: 'Match not found' })
