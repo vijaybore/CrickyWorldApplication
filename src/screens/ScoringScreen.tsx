@@ -1,4 +1,13 @@
 // src/screens/ScoringScreen.tsx
+// ─────────────────────────────────────────────────────────────────────────────
+// FIXES applied:
+//  1. ScorecardTab — tab labels use match.team1/team2 directly (never blank)
+//  2. ScorecardTab — score header uses battingTeam with robust fallback
+//  3. BallByBallTab — no longer filters out innings missing battingTeam
+//  4. ScoringScreen main — batting/bowling labels use robust fallback
+//  5. Player init useEffect — team detection uses innings index, not battingTeam string
+// ─────────────────────────────────────────────────────────────────────────────
+
 import React, { useState, useEffect, useCallback, useRef } from 'react'
 import {
   View, Text, Pressable, ScrollView, TextInput,
@@ -20,7 +29,7 @@ type PlayerInfo = {
   battingStyle?: string; bowlingStyle?: string
 }
 
-// ── Theme matching Home Screen ────────────────────────────────────────────────
+// ── Theme ─────────────────────────────────────────────────────────────────────
 const T = {
   bg: '#0a0a0a', surface: '#111111', card: '#161616', card2: '#1c1c1c',
   border: '#222222', border2: '#1a1a1a',
@@ -49,6 +58,26 @@ const calcRRR = (target: number, runs: number, balls: number, totalOvers: number
 
 async function getToken(): Promise<string | null> {
   return AsyncStorage.getItem('token').catch(() => null)
+}
+
+// ── Helper: get batting/bowling team names robustly ───────────────────────────
+// innings1 is ALWAYS team1 batting, innings2 is ALWAYS team2 batting.
+// Never rely solely on inn.battingTeam as it can be empty on old matches.
+function getBattingTeam(match: any, inningsKey: 'innings1' | 'innings2'): string {
+  const inn = match[inningsKey]
+  if (inn?.battingTeam) return inn.battingTeam
+  // Fallback: innings1 = battingFirst (= team1), innings2 = the other team
+  const battingFirst = match.battingFirst || match.team1
+  return inningsKey === 'innings1'
+    ? battingFirst
+    : (battingFirst === match.team1 ? match.team2 : match.team1)
+}
+
+function getBowlingTeam(match: any, inningsKey: 'innings1' | 'innings2'): string {
+  const inn = match[inningsKey]
+  if (inn?.bowlingTeam) return inn.bowlingTeam
+  const battingTeam = getBattingTeam(match, inningsKey)
+  return battingTeam === match.team1 ? match.team2 : match.team1
 }
 
 // ── BallDot ───────────────────────────────────────────────────────────────────
@@ -333,136 +362,320 @@ function UpdateOversModal({ visible, currentOvers, onConfirm, onClose }: {
 }
 
 // ── Scorecard Tab ─────────────────────────────────────────────────────────────
+// FIX: Tab labels use match.team1 / match.team2 directly — never blank.
+// FIX: Score header uses getBattingTeam() helper with robust fallback.
 function ScorecardTab({ match }: { match: any }) {
+  // ── FIX: Use match.team1/team2 for tab labels, NOT inn.battingTeam ──────────
+  // inn.battingTeam can be empty if set before backend fix; this is always correct.
+  const inn1BattingTeam = getBattingTeam(match, 'innings1')
+  const inn2BattingTeam = getBattingTeam(match, 'innings2')
+
+  // Show innings2 tab only if it has any data
+  const hasInn2 = (match.innings2?.balls ?? 0) > 0
+    || (match.innings2?.battingStats?.length ?? 0) > 0
+    || (match.innings2?.runs ?? 0) > 0
+
   const [activeInn, setActiveInn] = useState<'innings1'|'innings2'>('innings1')
   const inn = match[activeInn]
-  const hs  = Math.max(...(inn.battingStats ?? []).map((p: BattingStats) => p.runs), 0)
+
+  // Highest score in this innings for gold highlight
+  const scores = (inn.battingStats ?? []).map((p: BattingStats) => p.runs ?? 0)
+  const hs = scores.length > 0 ? Math.max(...scores) : 0
+
+  // ── FIX: determine batting/bowling team for the active innings ──────────────
+  const activeBattingTeam  = getBattingTeam(match, activeInn)
+  const activeBowlingTeam  = getBowlingTeam(match, activeInn)
+
   return (
     <ScrollView contentContainerStyle={{ paddingBottom: 40 }}>
+      {/* ── Innings Tabs ── */}
       <View style={{ flexDirection: 'row', borderBottomWidth: 1, borderBottomColor: T.border }}>
-        {(['innings1','innings2'] as const).map(k => (
-          <Pressable android_ripple={{ color: "rgba(255,255,255,0.12)" }} key={k} onPress={() => setActiveInn(k)}
-            style={[SC.tab, activeInn === k && { borderBottomWidth: 2, borderBottomColor: T.accent }]}>
-            <Text style={[SC.tabTxt, activeInn === k && { color: T.accent }]}>
-              {match[k].battingTeam || (k === 'innings1' ? match.team1 : match.team2)}
+        {/* Tab 1: always "1st Inn · team1" */}
+        <Pressable android_ripple={{ color: "rgba(255,255,255,0.12)" }}
+          onPress={() => setActiveInn('innings1')}
+          style={[SC.tab, activeInn === 'innings1' && { borderBottomWidth: 2, borderBottomColor: T.accent }]}>
+          <Text style={[SC.tabTxt, activeInn === 'innings1' && { color: T.accent }]}>
+            1st Inn
+          </Text>
+          <Text style={[SC.tabTeam, activeInn === 'innings1' && { color: T.accent+'aa' }]}>
+            {inn1BattingTeam}
+          </Text>
+        </Pressable>
+
+        {/* Tab 2: always "2nd Inn · team2" — shown only when innings2 has data */}
+        {hasInn2 && (
+          <Pressable android_ripple={{ color: "rgba(255,255,255,0.12)" }}
+            onPress={() => setActiveInn('innings2')}
+            style={[SC.tab, activeInn === 'innings2' && { borderBottomWidth: 2, borderBottomColor: T.gold }]}>
+            <Text style={[SC.tabTxt, activeInn === 'innings2' && { color: T.gold }]}>
+              2nd Inn
+            </Text>
+            <Text style={[SC.tabTeam, activeInn === 'innings2' && { color: T.gold+'aa' }]}>
+              {inn2BattingTeam}
             </Text>
           </Pressable>
-        ))}
+        )}
       </View>
-      <View style={{ padding: 14, borderBottomWidth: 1, borderBottomColor: T.border }}>
-        <Text style={SC.scoreText}>{inn.runs}/{inn.wickets}</Text>
-        <Text style={SC.oversText}>({fmtOv(inn.balls)} ov)</Text>
+
+      {/* ── Innings Header ── */}
+      <View style={{ padding: 14, borderBottomWidth: 1, borderBottomColor: T.border, backgroundColor: '#0d0000' }}>
+        <View style={{ flexDirection: 'row', gap: 16, marginBottom: 6 }}>
+          <Text style={{ fontSize: 11, color: T.text2, fontWeight: '700' }}>
+            🏏 {activeBattingTeam} batting
+          </Text>
+          <Text style={{ fontSize: 11, color: T.muted, fontWeight: '700' }}>
+            🎯 {activeBowlingTeam} bowling
+          </Text>
+        </View>
+        <Text style={SC.scoreText}>{inn.runs ?? 0}/{inn.wickets ?? 0}</Text>
+        <Text style={SC.oversText}>
+          ({fmtOv(inn.balls ?? 0)} ov){'  '}·{'  '}CRR {calcCRR(inn.runs ?? 0, inn.balls ?? 0)}
+        </Text>
       </View>
+
+      {/* ── Batting Table ── */}
       <View style={SC.tableHeader}>
         {['BATTER','R','B','4s','6s','SR'].map((h, i) => (
           <Text key={h} style={[SC.th, i === 0 && { flex: 2, textAlign: 'left' }]}>{h}</Text>
         ))}
       </View>
-      {(inn.battingStats ?? []).map((p: BattingStats, i: number) => (
-        <View key={i} style={[SC.row, i % 2 === 0 && { backgroundColor: 'rgba(255,255,255,0.02)' }]}>
-          <Text style={[SC.td, { flex: 2, textAlign: 'left', color: p.runs === hs ? T.gold : T.text }]} numberOfLines={1}>{p.name}</Text>
-          <Text style={[SC.td, { color: p.runs >= 50 ? T.gold : T.text, fontWeight: '700' }]}>{p.runs}{p.isOut ? '' : '*'}</Text>
-          <Text style={SC.td}>{p.balls}</Text>
-          <Text style={[SC.td, { color: T.green }]}>{p.fours}</Text>
-          <Text style={[SC.td, { color: T.purple }]}>{p.sixes}</Text>
-          <Text style={SC.td}>{p.balls > 0 ? (p.runs / p.balls * 100).toFixed(0) : '—'}</Text>
+
+      {(inn.battingStats ?? []).length === 0 ? (
+        <View style={{ padding: 24, alignItems: 'center' }}>
+          <Text style={{ color: T.muted, fontSize: 13 }}>No batting data yet</Text>
         </View>
-      ))}
+      ) : (
+        (inn.battingStats ?? []).map((p: BattingStats, i: number) => (
+          <View key={i} style={[SC.row, i % 2 === 0 && { backgroundColor: 'rgba(255,255,255,0.02)' }]}>
+            <View style={{ flex: 2, flexDirection: 'row', alignItems: 'center', gap: 5 }}>
+              {!p.isOut && <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: T.accent }} />}
+              <Text style={[SC.td, { flex: 1, textAlign: 'left', color: p.runs === hs && hs > 0 ? T.gold : T.text }]} numberOfLines={1}>
+                {p.name}{p.isOut ? '' : ' *'}
+              </Text>
+            </View>
+            <Text style={[SC.td, { color: (p.runs ?? 0) >= 50 ? T.gold : T.text, fontWeight: '700' }]}>{p.runs ?? 0}</Text>
+            <Text style={SC.td}>{p.balls ?? 0}</Text>
+            <Text style={[SC.td, { color: T.green }]}>{p.fours ?? 0}</Text>
+            <Text style={[SC.td, { color: T.purple }]}>{p.sixes ?? 0}</Text>
+            <Text style={SC.td}>
+              {(p.balls ?? 0) > 0 ? ((p.runs ?? 0) / (p.balls ?? 1) * 100).toFixed(0) : '—'}
+            </Text>
+          </View>
+        ))
+      )}
+
+      {/* Total row */}
       <View style={[SC.row, { backgroundColor: T.goldDim+'33', borderTopWidth: 1, borderTopColor: T.gold+'44' }]}>
         <Text style={[SC.td, { flex: 3, textAlign: 'left', color: T.gold, fontWeight: '800' }]}>TOTAL</Text>
-        <Text style={[SC.td, { flex: 3, textAlign: 'right', color: T.gold, fontWeight: '800', fontSize: 14 }]}>{inn.runs}/{inn.wickets} ({fmtOv(inn.balls)})</Text>
+        <Text style={[SC.td, { flex: 3, textAlign: 'right', color: T.gold, fontWeight: '800', fontSize: 14 }]}>
+          {inn.runs ?? 0}/{inn.wickets ?? 0} ({fmtOv(inn.balls ?? 0)})
+        </Text>
       </View>
+
+      {/* ── Bowling Table ── */}
       <View style={[SC.tableHeader, { backgroundColor: '#181818', marginTop: 4 }]}>
         {['BOWLER','O','R','W','ECO'].map((h, i) => (
           <Text key={h} style={[SC.th, { color: T.purple }, i === 0 && { flex: 2, textAlign: 'left' }]}>{h}</Text>
         ))}
       </View>
-      {(inn.bowlingStats ?? []).map((b: BowlingStats, i: number) => (
-        <View key={i} style={[SC.row, i % 2 === 0 && { backgroundColor: 'rgba(255,255,255,0.02)' }]}>
-          <Text style={[SC.td, { flex: 2, textAlign: 'left', color: b.wickets >= 3 ? T.purple : T.text2 }]} numberOfLines={1}>{b.name}</Text>
-          <Text style={SC.td}>{fmtOv(b.balls)}</Text>
-          <Text style={SC.td}>{b.runs}</Text>
-          <Text style={[SC.td, { color: b.wickets > 0 ? T.purple : T.muted, fontWeight: '700' }]}>{b.wickets}</Text>
-          <Text style={[SC.td, { color: b.balls > 0 && b.runs / (b.balls / 6) <= 6 ? T.green : T.text2 }]}>
-            {b.balls > 0 ? (b.runs / (b.balls / 6)).toFixed(2) : '—'}
-          </Text>
+
+      {(inn.bowlingStats ?? []).length === 0 ? (
+        <View style={{ padding: 24, alignItems: 'center' }}>
+          <Text style={{ color: T.muted, fontSize: 13 }}>No bowling data yet</Text>
         </View>
-      ))}
+      ) : (
+        (inn.bowlingStats ?? []).map((b: BowlingStats, i: number) => (
+          <View key={i} style={[SC.row, i % 2 === 0 && { backgroundColor: 'rgba(255,255,255,0.02)' }]}>
+            <Text style={[SC.td, { flex: 2, textAlign: 'left', color: (b.wickets ?? 0) >= 3 ? T.purple : T.text2 }]} numberOfLines={1}>
+              {b.name}
+            </Text>
+            <Text style={SC.td}>{fmtOv(b.balls ?? 0)}</Text>
+            <Text style={SC.td}>{b.runs ?? 0}</Text>
+            <Text style={[SC.td, { color: (b.wickets ?? 0) > 0 ? T.purple : T.muted, fontWeight: '700' }]}>
+              {b.wickets ?? 0}
+            </Text>
+            <Text style={[SC.td, { color: (b.balls ?? 0) > 0 && (b.runs ?? 0) / ((b.balls ?? 1) / 6) <= 6 ? T.green : T.text2 }]}>
+              {(b.balls ?? 0) > 0 ? ((b.runs ?? 0) / ((b.balls ?? 1) / 6)).toFixed(2) : '—'}
+            </Text>
+          </View>
+        ))
+      )}
     </ScrollView>
   )
 }
 
 const SC = StyleSheet.create({
-  tab:        { flex: 1, paddingVertical: 12, alignItems: 'center', borderBottomWidth: 2, borderBottomColor: 'transparent' },
-  tabTxt:     { color: T.muted, fontWeight: '700', fontSize: 13 },
+  tab:        { flex: 1, paddingVertical: 10, alignItems: 'center', borderBottomWidth: 2, borderBottomColor: 'transparent' },
+  tabTxt:     { color: T.muted, fontWeight: '800', fontSize: 13 },
+  tabTeam:    { color: T.muted, fontWeight: '600', fontSize: 10, marginTop: 1 },
   scoreText:  { fontSize: 36, fontWeight: '700', color: T.text, fontVariant: ['tabular-nums'] },
   oversText:  { fontSize: 12, color: T.subtext },
   tableHeader:{ flexDirection: 'row', backgroundColor: T.card, paddingHorizontal: 10, paddingVertical: 7, borderBottomWidth: 1, borderBottomColor: T.border },
   th:         { flex: 1, textAlign: 'right', fontSize: 10, color: T.gold, fontWeight: '800', letterSpacing: 0.8 },
-  row:        { flexDirection: 'row', paddingHorizontal: 10, paddingVertical: 9, borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.04)' },
+  row:        { flexDirection: 'row', paddingHorizontal: 10, paddingVertical: 9, borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.04)', alignItems: 'center' },
   td:         { flex: 1, textAlign: 'right', fontSize: 12, color: T.text2, fontVariant: ['tabular-nums'] },
 })
 
 // ── Ball by Ball Tab ──────────────────────────────────────────────────────────
+// FIX: Uses getBattingTeam() helper — no longer requires inn.battingTeam to be set.
+// FIX: Always shows innings2 tab if innings2 has balls, even if battingTeam was blank.
 function BallByBallTab({ match }: { match: any }) {
-  const innings = [match.innings2, match.innings1].filter((i: any) => i?.battingTeam && (i.ballByBall?.length ?? 0) > 0)
+  // ── FIX: build innings list from match.innings1 / match.innings2 directly ──
+  // Don't filter on inn.battingTeam — use index to derive team name if blank.
+  const allInnings = [
+    { inn: match.innings1, key: 'innings1' as const },
+    { inn: match.innings2, key: 'innings2' as const },
+  ].filter(({ inn }) => inn && ((inn.ballByBall?.length ?? 0) > 0 || (inn.runs ?? 0) > 0 || (inn.battingStats?.length ?? 0) > 0))
+
   const [activeIdx, setActiveIdx] = useState(0)
-  const current = innings[activeIdx]
-  if (!current) return (
-    <View style={{ alignItems: 'center', padding: 60 }}>
-      <Text style={{ fontSize: 36, marginBottom: 12 }}>📻</Text>
-      <Text style={{ color: T.text2, fontWeight: '700' }}>No balls bowled yet</Text>
-    </View>
-  )
-  const overs: Ball[][] = []
-  let legal = 0
-  ;(current.ballByBall as Ball[]).forEach((b: Ball) => {
-    const isExtra = b.isWide || b.isNoBall
-    if (!isExtra) legal++
-    const idx = Math.max(0, Math.floor((legal - (isExtra ? 0 : 1)) / 6))
-    if (!overs[idx]) overs[idx] = []
-    overs[idx].push(b)
-  })
-  return (
-    <ScrollView contentContainerStyle={{ paddingBottom: 40 }}>
-      {innings.length > 1 && (
+
+  // Auto-switch to whichever innings is currently active
+  useEffect(() => {
+    if (match.status === 'innings2' && allInnings.length > 1) {
+      setActiveIdx(1)
+    } else {
+      setActiveIdx(0)
+    }
+  }, [match.status])
+
+  const currentEntry = allInnings[activeIdx] ?? allInnings[0]
+  const current = currentEntry?.inn
+  const currentKey = currentEntry?.key ?? 'innings1'
+  const balls: Ball[] = current?.ballByBall ?? []
+
+  // Helper: get team name for an innings entry
+  const getTeamName = (key: 'innings1' | 'innings2') => getBattingTeam(match, key)
+
+  if (!current || balls.length === 0) return (
+    <View style={{ flex: 1 }}>
+      {allInnings.length > 1 && (
         <View style={{ flexDirection: 'row', borderBottomWidth: 1, borderBottomColor: T.border }}>
-          {innings.map((inn: any, i: number) => (
-            <Pressable android_ripple={{ color: "rgba(255,255,255,0.12)" }} key={i} onPress={() => setActiveIdx(i)}
+          {allInnings.map(({ key }, i) => (
+            <Pressable android_ripple={{ color: "rgba(255,255,255,0.12)" }} key={key} onPress={() => setActiveIdx(i)}
               style={[SC.tab, activeIdx === i && { borderBottomColor: T.gold }]}>
-              <Text style={[SC.tabTxt, activeIdx === i && { color: T.gold }]}>{inn.battingTeam}</Text>
+              <Text style={[SC.tabTxt, activeIdx === i && { color: T.gold }]}>
+                {i === 0 ? '1st Inn' : '2nd Inn'}
+              </Text>
+              <Text style={[SC.tabTeam, activeIdx === i && { color: T.gold + 'aa' }]}>
+                {getTeamName(key)}
+              </Text>
             </Pressable>
           ))}
         </View>
       )}
-      {[...overs].reverse().map((balls, ri) => {
+      <View style={{ alignItems: 'center', padding: 60 }}>
+        <Text style={{ fontSize: 36, marginBottom: 12 }}>📻</Text>
+        <Text style={{ color: T.text2, fontWeight: '700', marginBottom: 6 }}>No balls bowled yet</Text>
+        <Text style={{ color: T.muted, fontSize: 12, textAlign: 'center' }}>
+          Go to Scoring tab and record balls
+        </Text>
+      </View>
+    </View>
+  )
+
+  // Group balls into overs correctly
+  const overs: Ball[][] = []
+  let legalCount = 0
+  balls.forEach((b: Ball) => {
+    const isExtra = b.isWide || b.isNoBall
+    const overIdx = Math.floor(legalCount / 6)
+    if (!overs[overIdx]) overs[overIdx] = []
+    overs[overIdx].push(b)
+    if (!isExtra) legalCount++
+  })
+
+  const getBallDesc = (ball: Ball): string => {
+    if (ball.isWicket) return `OUT! ${ball.batsmanName ?? 'Batsman'} — ${ball.wicketType ?? 'dismissed'}`
+    if (ball.isWide)   return `Wide${(ball.runs ?? 0) > 1 ? ` +${ball.runs}` : ''}`
+    if (ball.isNoBall) return `No Ball${(ball.runs ?? 0) > 0 ? ` +${ball.runs}` : ''}`
+    if (ball.runs === 6) return `SIX! ${ball.batsmanName ?? ''} — over the boundary`
+    if (ball.runs === 4) return `FOUR! ${ball.batsmanName ?? ''} — races to the fence`
+    if (ball.runs === 0) return `Dot ball — ${ball.batsmanName ?? 'Batsman'} defends`
+    return `${ball.batsmanName ?? 'Batsman'} — ${ball.runs} run${(ball.runs ?? 0) !== 1 ? 's' : ''}`
+  }
+
+  return (
+    <ScrollView contentContainerStyle={{ paddingBottom: 40 }}>
+      {/* Innings tabs */}
+      {allInnings.length > 1 && (
+        <View style={{ flexDirection: 'row', borderBottomWidth: 1, borderBottomColor: T.border }}>
+          {allInnings.map(({ key }, i) => (
+            <Pressable android_ripple={{ color: "rgba(255,255,255,0.12)" }} key={key} onPress={() => setActiveIdx(i)}
+              style={[SC.tab, activeIdx === i && { borderBottomColor: T.gold }]}>
+              <Text style={[SC.tabTxt, activeIdx === i && { color: T.gold }]}>
+                {i === 0 ? '1st Inn' : '2nd Inn'}
+              </Text>
+              <Text style={[SC.tabTeam, activeIdx === i && { color: T.gold + 'aa' }]}>
+                {getTeamName(key)}
+              </Text>
+            </Pressable>
+          ))}
+        </View>
+      )}
+
+      {/* Innings summary strip */}
+      <View style={{ flexDirection: 'row', justifyContent: 'space-between', paddingHorizontal: 14, paddingVertical: 10, backgroundColor: '#0d0000', borderBottomWidth: 1, borderBottomColor: T.border }}>
+        <Text style={{ color: T.text, fontWeight: '800', fontSize: 16, fontVariant: ['tabular-nums'] }}>
+          {current.runs ?? 0}/{current.wickets ?? 0}
+        </Text>
+        <Text style={{ color: T.subtext, fontSize: 12, alignSelf: 'center' }}>
+          {fmtOv(current.balls ?? 0)} ov  ·  CRR {calcCRR(current.runs ?? 0, current.balls ?? 0)}
+        </Text>
+        <Text style={{ color: T.subtext, fontSize: 11, alignSelf: 'center' }}>
+          🏏 {getTeamName(currentKey)}
+        </Text>
+      </View>
+
+      {/* Over blocks — newest first */}
+      {[...overs].reverse().map((overBalls, ri) => {
         const overNum = overs.length - 1 - ri
-        const overRuns = balls.reduce((s: number, b: Ball) => s + (b.runs ?? 0), 0)
-        const overWkts = balls.filter((b: Ball) => b.isWicket).length
+        const overRuns = overBalls.reduce((s: number, b: Ball) => s + (b.runs ?? 0), 0)
+        const overWkts = overBalls.filter((b: Ball) => b.isWicket).length
+        const isMaiden  = overRuns === 0 && overWkts === 0 && overBalls.filter(b => !b.isWide && !b.isNoBall).length === 6
+
         return (
           <View key={overNum} style={{ borderBottomWidth: 1, borderBottomColor: T.border }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 8, paddingHorizontal: 14, backgroundColor: T.card }}>
-              <Text style={{ color: T.gold, fontWeight: '800', fontSize: 12 }}>Over {overNum + 1}</Text>
-              <View style={{ flexDirection: 'row', gap: 4 }}>{balls.map((b: Ball, i: number) => <BallDot key={i} ball={b} size={24} />)}</View>
-              <Text style={{ color: T.text2, fontSize: 11, fontVariant: ['tabular-nums'] }}>{overRuns}r{overWkts > 0 ? ` · ${overWkts}W` : ''}</Text>
-            </View>
-            {[...balls].reverse().map((ball: Ball, bi: number) => {
-              let desc = `${ball.batsmanName ?? 'Batsman'} — ${ball.runs} run${ball.runs !== 1 ? 's' : ''}`
-              if (ball.isWicket) desc = `OUT! ${ball.batsmanName} — ${ball.wicketType ?? 'dismissed'}`
-              if (ball.isWide)   desc = `Wide${ball.runs > 1 ? ` (+${ball.runs})` : ''}`
-              if (ball.isNoBall) desc = `No Ball${ball.runs > 0 ? ` +${ball.runs}` : ''}`
-              if (ball.runs === 6 && !ball.isWide && !ball.isNoBall) desc = `SIX! ${ball.batsmanName} hits ${ball.bowlerName}`
-              if (ball.runs === 4 && !ball.isWide && !ball.isNoBall) desc = `FOUR! ${ball.batsmanName}`
-              return (
-                <View key={bi} style={[{ flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 14, paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.03)' }, ball.isWicket && { backgroundColor: 'rgba(204,0,0,0.05)' }]}>
-                  <BallDot ball={ball} size={26} />
-                  <View style={{ flex: 1 }}>
-                    <Text style={{ fontSize: 12, color: ball.isWicket ? T.accent : T.text, fontWeight: ball.isWicket ? '700' : '400' }}>{desc}</Text>
-                    {ball.bowlerName && !ball.isWide && !ball.isNoBall && <Text style={{ fontSize: 11, color: T.muted, marginTop: 1 }}>b {ball.bowlerName}</Text>}
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                <Text style={{ color: T.gold, fontWeight: '800', fontSize: 12 }}>Over {overNum + 1}</Text>
+                {isMaiden && (
+                  <View style={{ backgroundColor: T.greenDim, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}>
+                    <Text style={{ color: T.green, fontSize: 9, fontWeight: '800' }}>MAIDEN</Text>
                   </View>
+                )}
+              </View>
+              <View style={{ flexDirection: 'row', gap: 4 }}>
+                {overBalls.map((b: Ball, i: number) => <BallDot key={i} ball={b} size={24} />)}
+              </View>
+              <Text style={{ color: T.text2, fontSize: 11, fontVariant: ['tabular-nums'] }}>
+                {overRuns}r{overWkts > 0 ? ` · ${overWkts}W` : ''}
+              </Text>
+            </View>
+
+            {[...overBalls].reverse().map((ball: Ball, bi: number) => (
+              <View key={bi} style={[
+                { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 14, paddingVertical: 9, borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.03)' },
+                ball.isWicket && { backgroundColor: 'rgba(204,0,0,0.07)' },
+                (ball.runs ?? 0) === 6 && !ball.isWicket && { backgroundColor: 'rgba(192,132,252,0.06)' },
+                (ball.runs ?? 0) === 4 && !ball.isWicket && { backgroundColor: 'rgba(34,197,94,0.05)' },
+              ]}>
+                <BallDot ball={ball} size={28} />
+                <View style={{ flex: 1 }}>
+                  <Text style={{
+                    fontSize: 13,
+                    color: ball.isWicket ? T.accent : (ball.runs ?? 0) >= 6 ? T.purple : (ball.runs ?? 0) >= 4 ? T.green : T.text,
+                    fontWeight: ball.isWicket || (ball.runs ?? 0) >= 4 ? '700' : '400'
+                  }}>
+                    {getBallDesc(ball)}
+                  </Text>
+                  {ball.bowlerName && (
+                    <Text style={{ fontSize: 11, color: T.muted, marginTop: 2 }}>
+                      {ball.bowlerName} to {ball.batsmanName ?? 'batsman'}
+                    </Text>
+                  )}
                 </View>
-              )
-            })}
+              </View>
+            ))}
           </View>
         )
       })}
@@ -500,8 +713,6 @@ export default function ScoringScreen() {
   const [updateOversOpen,setUpdateOversOpen]= useState(false)
   const [pendingBall,    setPendingBall]    = useState<any>(null)
 
-  const legalBallsRef = useRef(0)
-
   const fetchMatch = useCallback(async () => {
     try {
       const token    = await getToken()
@@ -520,28 +731,53 @@ export default function ScoringScreen() {
 
   useEffect(() => {
     const load = async () => {
-      const token = await getToken()
+      const token    = await getToken()
       const deviceId = await AsyncStorage.getItem('@crickyworld:deviceId').catch(() => null)
-      const baseUrl = apiUrl('/api/players')
-      const url = !token && deviceId ? `${baseUrl}?deviceId=${deviceId}` : baseUrl
-      const res = await fetch(url, { headers: authHeaders(token) })
+      const baseUrl  = apiUrl('/api/players')
+      const url      = !token && deviceId ? `${baseUrl}?deviceId=${deviceId}` : baseUrl
+      const res      = await fetch(url, { headers: authHeaders(token) })
       if (res.ok) setAllPlayers(await res.json() as PlayerInfo[])
     }
     load().catch(() => {})
   }, [])
 
-  // Auto-init players + alert if not set
+  // ── FIX: Player init uses innings index to determine batting/bowling teams ──
+  // innings1 = team that batted first (battingFirst / team1)
+  // innings2 = the other team
   useEffect(() => {
     if (!match) return
-    const inningsKey = match.status === 'innings1' ? 'innings1' : 'innings2'
+
+    const inningsKey: 'innings1' | 'innings2' = match.status === 'innings1' ? 'innings1' : 'innings2'
     const inn = match[inningsKey]
-    const active = (inn?.battingStats ?? []).filter((p: any) => !p.isOut)
-    if (!striker && active[0]) setStriker(active[0].name)
-    if (!nonStriker && active[1]) setNonStriker(active[1].name)
-    if (!bowlerName && inn?.bowlingStats?.length) setBowlerName(inn.bowlingStats.slice(-1)[0].name)
+    if (!inn) return
+
+    // ── FIX: use getBattingTeam helper, not inn.battingTeam directly ─────────
+    const battingTeamName = getBattingTeam(match, inningsKey)
+    const battingIsTeam1  = battingTeamName === match.team1
+    const battingRoster: string[]  = battingIsTeam1 ? (match.team1Players ?? []) : (match.team2Players ?? [])
+    const bowlingRoster: string[]  = battingIsTeam1 ? (match.team2Players ?? []) : (match.team1Players ?? [])
+
+    const activeBatters: string[] = (inn.battingStats ?? [])
+      .filter((p: any) => !p.isOut)
+      .map((p: any) => p.name)
+
+    if (!striker) {
+      const candidate = activeBatters[0] || battingRoster[0] || ''
+      if (candidate) setStriker(candidate)
+    }
+    if (!nonStriker) {
+      const candidate = activeBatters[1] || battingRoster[1] || ''
+      if (candidate) setNonStriker(candidate)
+    }
+    if (!bowlerName) {
+      const lastBowler = inn.bowlingStats?.length
+        ? inn.bowlingStats[inn.bowlingStats.length - 1].name
+        : ''
+      const candidate = lastBowler || bowlingRoster[0] || ''
+      if (candidate) setBowlerName(candidate)
+    }
   }, [match])
 
-  // Alert to set players if missing when match starts
   useEffect(() => {
     if (!match || match.status === 'setup' || match.status === 'completed') return
     const timer = setTimeout(() => {
@@ -550,11 +786,7 @@ export default function ScoringScreen() {
         if (!striker) missing.push('Striker')
         if (!nonStriker) missing.push('Non-Striker')
         if (!bowlerName) missing.push('Bowler')
-        Alert.alert(
-          '⚠️ Players Not Set',
-          `Please set: ${missing.join(', ')} before recording balls.`,
-          [{ text: 'OK', style: 'default' }]
-        )
+        Alert.alert('⚠️ Players Not Set', `Please set: ${missing.join(', ')} before recording balls.`, [{ text: 'OK' }])
       }
     }, 800)
     return () => clearTimeout(timer)
@@ -568,42 +800,57 @@ export default function ScoringScreen() {
   if (error || !match) return (
     <View style={[S.root, { alignItems: 'center', justifyContent: 'center', padding: 40 }]}>
       <Text style={{ color: T.accent, fontSize: 16, marginBottom: 20 }}>{error || 'Match not found'}</Text>
-      <Pressable android_ripple={{ color: "rgba(255,255,255,0.12)" }} onPress={() => navigation.goBack()} style={{ padding: 12, backgroundColor: T.accentDim, borderRadius: 10 }}>
+      <Pressable android_ripple={{ color: "rgba(255,255,255,0.12)" }} onPress={() => navigation.goBack()}
+        style={{ padding: 12, backgroundColor: T.accentDim, borderRadius: 10 }}>
         <Text style={{ color: T.text, fontWeight: '700' }}>← Go Back</Text>
       </Pressable>
     </View>
   )
 
-  const inningsKey  = match.status === 'innings1' ? 'innings1' : 'innings2'
-  const innings     = match[inningsKey]
-  const isInnings2  = match.status === 'innings2'
-  const target      = isInnings2 ? match.innings1.runs + 1 : null
+  // ── Active innings ─────────────────────────────────────────────────────────
+  const inningsKey: 'innings1' | 'innings2' = match.status === 'innings1' ? 'innings1' : 'innings2'
+  const innings    = match[inningsKey]
+  const isInnings2 = match.status === 'innings2'
+  const target     = isInnings2 ? (match.innings1?.runs ?? 0) + 1 : null
+
+  // ── FIX: Use helper to get batting/bowling team names ──────────────────────
+  const activeBattingTeam = getBattingTeam(match, inningsKey)
+  const activeBowlingTeam = getBowlingTeam(match, inningsKey)
 
   const WICKET_TYPES = ['Wicket','Caught','Bowled','Stumped','RunOut(Striker)','RunOut(Non-Striker)','LBW','Hit-Wicket']
   const ASSIST_TYPES = ['Caught','Stumped','RunOut(Striker)','RunOut(Non-Striker)']
 
-  const battingTeamPlayers = innings.battingTeam === match.team1 ? match.team1Players : match.team2Players
-  const bowlingTeamPlayers = innings.battingTeam === match.team1 ? match.team2Players : match.team1Players
-  const allPlayerNames     = allPlayers.map(p => p.name)
+  // Player lists derived from innings ownership
+  const battingIsTeam1    = activeBattingTeam === match.team1
+  const battingTeamRoster: string[] = battingIsTeam1 ? (match.team1Players ?? []) : (match.team2Players ?? [])
+  const bowlingTeamRoster: string[] = battingIsTeam1 ? (match.team2Players ?? []) : (match.team1Players ?? [])
 
-  const knownBatters = [...new Set([...(battingTeamPlayers ?? []), ...(innings.battingStats?.map((p: any) => p.name) ?? []), ...allPlayerNames])].filter(Boolean) as string[]
-  const knownBowlers = [...new Set([...(bowlingTeamPlayers ?? []), ...(innings.bowlingStats?.map((p: any) => p.name) ?? []), ...allPlayerNames])].filter(Boolean) as string[]
-  const existingBowlers = (innings.bowlingStats?.map((p: any) => p.name) ?? []) as string[]
+  const allPlayerNames = allPlayers.map(p => p.name)
 
-  const legalBalls   = (innings.ballByBall ?? []).filter((b: Ball) => !b.isWide && !b.isNoBall)
+  const recordedBatters = (innings.battingStats ?? []).map((p: any) => p.name) as string[]
+  const knownBatters    = [...new Set([...battingTeamRoster, ...recordedBatters, ...allPlayerNames])].filter(Boolean)
+
+  const recordedBowlers = (innings.bowlingStats ?? []).map((p: any) => p.name) as string[]
+  const knownBowlers    = [...new Set([...bowlingTeamRoster, ...recordedBowlers, ...allPlayerNames])].filter(Boolean)
+
+  // Legal balls in current over
+  const allBalls     = (innings.ballByBall ?? []) as Ball[]
+  const legalBalls   = allBalls.filter((b: Ball) => !b.isWide && !b.isNoBall)
   const overBallNum  = legalBalls.length % 6
-  let thisBalls: Ball[] = []
-  let lc = 0
-  for (let i = (innings.ballByBall ?? []).length - 1; i >= 0; i--) {
-    const b = innings.ballByBall[i] as Ball
-    thisBalls.unshift(b)
-    if (!b.isWide && !b.isNoBall) {
-      lc++
-      if (lc >= overBallNum && overBallNum > 0) break
-      if (overBallNum === 0) break
+
+  let currentOverBalls: Ball[] = []
+  if (overBallNum > 0) {
+    let lc = 0
+    for (let i = allBalls.length - 1; i >= 0; i--) {
+      const b = allBalls[i]
+      currentOverBalls.unshift(b)
+      if (!b.isWide && !b.isNoBall) {
+        lc++
+        if (lc >= overBallNum) break
+      }
     }
   }
-  const currentOverBalls = overBallNum === 0 ? [] : thisBalls
+
   const overRuns = currentOverBalls.reduce((s: number, b: Ball) => s + (b.runs ?? 0), 0)
   const overWkts = currentOverBalls.filter((b: Ball) => b.isWicket).length
 
@@ -613,7 +860,6 @@ export default function ScoringScreen() {
   const okEnabled       = runs !== null && !loading
 
   const postBall = async (ballData: any) => {
-    // Validate players set
     if (!striker || !nonStriker || !bowlerName) {
       const missing = []
       if (!striker) missing.push('Striker')
@@ -628,7 +874,8 @@ export default function ScoringScreen() {
       const deviceId = await AsyncStorage.getItem('@crickyworld:deviceId').catch(() => null)
       const body     = token ? ballData : { ...ballData, deviceId }
       const res      = await fetch(apiUrl(`/api/matches/${id}/ball`), {
-        method: 'POST', headers: jsonHeaders(token), body: JSON.stringify(body)})
+        method: 'POST', headers: jsonHeaders(token), body: JSON.stringify(body)
+      })
       if (!res.ok) throw new Error('Failed to record ball')
       const data = await res.json()
       setMatch(data)
@@ -640,13 +887,14 @@ export default function ScoringScreen() {
   }
 
   const submitBall = (ballData: any, nextBatsman: string | null) => {
-    const beforeLegal = legalBalls.length
-    const isLegal     = !ballData.isWide && !ballData.isNoBall
+    const isLegal = !ballData.isWide && !ballData.isNoBall
     postBall(ballData)
-    if (isLegal && ballData.runs % 2 !== 0) { setStriker(nonStriker); setNonStriker(striker) }
-    if (ballData.isWicket && nextBatsman) setStriker(nextBatsman)
-    if (isLegal && (beforeLegal + 1) % 6 === 0) {
+    if (isLegal && (ballData.runs ?? 0) % 2 !== 0) {
       const tmp = striker; setStriker(nonStriker); setNonStriker(tmp)
+    }
+    if (ballData.isWicket && nextBatsman) setStriker(nextBatsman)
+    if (isLegal && (legalBalls.length + 1) % 6 === 0) {
+      setStriker(s => { setNonStriker(s); return nonStriker })
       setOverChangeOpen(true)
     }
     setRuns(null); setWicket(false); setWicketType('Wicket')
@@ -656,12 +904,16 @@ export default function ScoringScreen() {
   const handleOK = () => {
     if (runs === null) return
     const ball = {
-      runs, isWicket: wicket,
+      runs,
+      isWicket: wicket,
       wicketType: wicket ? wicketType : null,
       assistPlayer: wicket && ASSIST_TYPES.includes(wicketType) ? assistName : null,
-      isWide: wide, isNoBall: noBall,
+      isWide: wide,
+      isNoBall: noBall,
       extraRuns: wide || noBall ? 1 : 0,
-      batsmanName: striker, bowlerName }
+      batsmanName: striker,
+      bowlerName,
+    }
     if (wicket) { setPendingBall(ball); setNewBatsmanOpen(true) }
     else submitBall(ball, null)
   }
@@ -672,7 +924,9 @@ export default function ScoringScreen() {
       const token    = await getToken()
       const deviceId = await AsyncStorage.getItem('@crickyworld:deviceId').catch(() => null)
       const undoBody = token ? {} : { deviceId }
-      const res      = await fetch(apiUrl(`/api/matches/${id}/undo`), { method: 'POST', headers: jsonHeaders(token), body: JSON.stringify(undoBody) })
+      const res      = await fetch(apiUrl(`/api/matches/${id}/undo`), {
+        method: 'POST', headers: jsonHeaders(token), body: JSON.stringify(undoBody)
+      })
       if (!res.ok) throw new Error()
       setMatch(await res.json())
     } catch { Alert.alert('Undo', 'Nothing to undo') }
@@ -685,7 +939,9 @@ export default function ScoringScreen() {
       const token    = await getToken()
       const deviceId = await AsyncStorage.getItem('@crickyworld:deviceId').catch(() => null)
       const body     = token ? { overs: newOvers } : { overs: newOvers, deviceId }
-      const res      = await fetch(apiUrl(`/api/matches/${id}/overs`), { method: 'PATCH', headers: jsonHeaders(token), body: JSON.stringify(body) })
+      const res      = await fetch(apiUrl(`/api/matches/${id}/overs`), {
+        method: 'PATCH', headers: jsonHeaders(token), body: JSON.stringify(body)
+      })
       if (!res.ok) throw new Error()
       setMatch(await res.json())
       setUpdateOversOpen(false)
@@ -703,10 +959,18 @@ export default function ScoringScreen() {
           const token    = await getToken()
           const deviceId = await AsyncStorage.getItem('@crickyworld:deviceId').catch(() => null)
           const newStatus = match.status === 'innings1' ? 'innings2' : 'completed'
-          const body      = token ? { ...match, status: newStatus } : { ...match, status: newStatus, deviceId }
-          const res       = await fetch(apiUrl(`/api/matches/${id}`), { method: 'PUT', headers: jsonHeaders(token), body: JSON.stringify(body) })
+          const body      = token
+            ? { ...match, status: newStatus }
+            : { ...match, status: newStatus, deviceId }
+          const res = await fetch(apiUrl(`/api/matches/${id}`), {
+            method: 'PUT', headers: jsonHeaders(token), body: JSON.stringify(body)
+          })
           if (!res.ok) throw new Error()
-          setMatch(await res.json())
+          const updated = await res.json()
+          setMatch(updated)
+          if (newStatus === 'innings2') {
+            setStriker(''); setNonStriker(''); setBowlerName('')
+          }
         } catch { await fetchMatch() }
         finally { setLoading(false) }
       }},
@@ -723,7 +987,7 @@ export default function ScoringScreen() {
     <View style={S.root}>
       <StatusBar barStyle="light-content" backgroundColor={T.bg} />
 
-      {/* HEADER */}
+      {/* ── HEADER ── */}
       <View style={S.header}>
         <Pressable android_ripple={{ color: "rgba(255,255,255,0.12)" }} onPress={() => navigation.goBack()} style={S.backBtn}>
           <Text style={{ color: T.text2, fontSize: 18, fontWeight: '600' }}>←</Text>
@@ -743,34 +1007,60 @@ export default function ScoringScreen() {
         {tab === 'scoring' && (
           <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingBottom: 8 }} keyboardShouldPersistTaps="handled">
 
-            {/* Score card */}
+            {/* ── Score Card ── */}
             <View style={S.scoreCard}>
+              {/* ── FIX: use activeBattingTeam / activeBowlingTeam ── */}
+              <View style={{ flexDirection: 'row', gap: 12, marginBottom: 6 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                  <Text style={{ fontSize: 10 }}>🏏</Text>
+                  <Text style={{ fontSize: 11, color: T.text2, fontWeight: '800' }}>{activeBattingTeam}</Text>
+                  <Text style={{ fontSize: 10, color: T.muted }}>batting</Text>
+                </View>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                  <Text style={{ fontSize: 10 }}>🎯</Text>
+                  <Text style={{ fontSize: 11, color: T.subtext, fontWeight: '700' }}>{activeBowlingTeam}</Text>
+                  <Text style={{ fontSize: 10, color: T.muted }}>bowling</Text>
+                </View>
+              </View>
+
               <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                 <View>
-                  <Text style={S.scoreSub}>{innings.battingTeam} · Innings {isInnings2 ? 2 : 1}</Text>
+                  <Text style={S.scoreSub}>
+                    {isInnings2 ? '2nd Innings' : '1st Innings'}
+                  </Text>
                   <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 4 }}>
-                    <Text style={S.scoreMain}>{innings.runs}</Text>
-                    <Text style={S.scoreWkt}>/{innings.wickets}</Text>
+                    <Text style={S.scoreMain}>{innings.runs ?? 0}</Text>
+                    <Text style={S.scoreWkt}>/{innings.wickets ?? 0}</Text>
                   </View>
-                  <Text style={S.scoreOv}>({fmtOv(innings.balls)} ov){isInnings2 && target ? ` · Need ${Math.max(0, target - innings.runs)} off ${match.overs * 6 - innings.balls} balls` : ''}</Text>
+                  <Text style={S.scoreOv}>
+                    ({fmtOv(innings.balls ?? 0)} ov)
+                    {isInnings2 && target
+                      ? `  ·  Need ${Math.max(0, target - (innings.runs ?? 0))} off ${match.overs * 6 - (innings.balls ?? 0)} balls`
+                      : ''}
+                  </Text>
                 </View>
                 <View style={{ alignItems: 'flex-end' }}>
                   <Text style={S.rateLabel}>CRR</Text>
-                  <Text style={S.rateVal}>{calcCRR(innings.runs, innings.balls)}</Text>
+                  <Text style={S.rateVal}>{calcCRR(innings.runs ?? 0, innings.balls ?? 0)}</Text>
                   {isInnings2 && target && <>
                     <Text style={[S.rateLabel, { color: T.gold }]}>RRR</Text>
-                    <Text style={[S.rateVal, { color: T.gold, fontSize: 18 }]}>{calcRRR(target, innings.runs, innings.balls, match.overs)}</Text>
+                    <Text style={[S.rateVal, { color: T.gold, fontSize: 18 }]}>
+                      {calcRRR(target, innings.runs ?? 0, innings.balls ?? 0, match.overs)}
+                    </Text>
                   </>}
                 </View>
               </View>
             </View>
 
-            {/* Player card */}
+            {/* ── Player Card ── */}
             <View style={S.playerCard}>
               <View style={S.playerCardHeader}>
-                <Text style={[S.colHdr, { flex: 1, textAlign: 'left' }]}>BATTER</Text>
+                <Text style={[S.colHdr, { flex: 1, textAlign: 'left', color: T.sky }]}>
+                  BATTER ({activeBattingTeam})
+                </Text>
                 {['R','B','SR'].map(h => <Text key={h} style={S.colHdr}>{h}</Text>)}
               </View>
+
               {/* Striker */}
               <Pressable android_ripple={{ color: "rgba(255,255,255,0.12)" }} onPress={() => setPicker('striker')} style={S.playerRow}>
                 <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 7 }}>
@@ -781,8 +1071,13 @@ export default function ScoringScreen() {
                 </View>
                 <Text style={S.statCell}>{strikerStats?.runs ?? 0}</Text>
                 <Text style={S.statCell}>{strikerStats?.balls ?? 0}</Text>
-                <Text style={S.statCell}>{(strikerStats?.balls ?? 0) > 0 ? Math.round(strikerStats.runs / strikerStats.balls * 100) : '—'}</Text>
+                <Text style={S.statCell}>
+                  {(strikerStats?.balls ?? 0) > 0
+                    ? Math.round((strikerStats.runs / strikerStats.balls) * 100)
+                    : '—'}
+                </Text>
               </Pressable>
+
               {/* Non-striker */}
               <Pressable android_ripple={{ color: "rgba(255,255,255,0.12)" }} onPress={() => setPicker('nonStriker')} style={S.playerRow}>
                 <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 7 }}>
@@ -793,12 +1088,19 @@ export default function ScoringScreen() {
                 </View>
                 <Text style={S.statCell}>{nonStrikerStats?.runs ?? 0}</Text>
                 <Text style={S.statCell}>{nonStrikerStats?.balls ?? 0}</Text>
-                <Text style={S.statCell}>{(nonStrikerStats?.balls ?? 0) > 0 ? Math.round(nonStrikerStats.runs / nonStrikerStats.balls * 100) : '—'}</Text>
+                <Text style={S.statCell}>
+                  {(nonStrikerStats?.balls ?? 0) > 0
+                    ? Math.round((nonStrikerStats.runs / nonStrikerStats.balls) * 100)
+                    : '—'}
+                </Text>
               </Pressable>
+
               {/* Bowler */}
               <Pressable android_ripple={{ color: "rgba(255,255,255,0.12)" }} onPress={() => setPicker('bowler')} style={[S.playerRow, { backgroundColor: 'rgba(251,146,60,0.04)' }]}>
                 <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 7 }}>
-                  <Text style={{ fontSize: 10, color: T.orange, fontWeight: '800' }}>BOWL</Text>
+                  <Text style={{ fontSize: 9, color: T.orange, fontWeight: '800' }}>
+                    BOWL ({activeBowlingTeam})
+                  </Text>
                   <Text style={[S.playerName, { color: T.orange }, !bowlerName && { color: T.muted, fontSize: 13 }]} numberOfLines={1}>
                     {bowlerName || '⚠️ Tap to set bowler'}
                   </Text>
@@ -809,24 +1111,33 @@ export default function ScoringScreen() {
               </Pressable>
             </View>
 
-            {/* This over */}
+            {/* ── This Over ── */}
             <View style={S.overCard}>
               <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8 }}>
-                <Text style={{ fontSize: 10, color: T.muted, fontWeight: '800', letterSpacing: 1 }}>THIS OVER · {fmtOv(innings.balls)}</Text>
-                {currentOverBalls.length > 0 && <Text style={{ fontSize: 11, color: T.subtext, fontWeight: '700' }}>{overRuns}R{overWkts > 0 ? ` · ${overWkts}W` : ''}</Text>}
+                <Text style={{ fontSize: 10, color: T.muted, fontWeight: '800', letterSpacing: 1 }}>
+                  THIS OVER · {fmtOv(innings.balls ?? 0)}
+                </Text>
+                {currentOverBalls.length > 0 && (
+                  <Text style={{ fontSize: 11, color: T.subtext, fontWeight: '700' }}>
+                    {overRuns}R{overWkts > 0 ? ` · ${overWkts}W` : ''}
+                  </Text>
+                )}
               </View>
               <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, minHeight: 30 }}>
                 {currentOverBalls.length === 0
-                  ? <Text style={{ color: T.muted, fontSize: 12 }}>No balls yet</Text>
+                  ? <Text style={{ color: T.muted, fontSize: 12 }}>No balls yet this over</Text>
                   : currentOverBalls.map((b: Ball, i: number) => <BallDot key={i} ball={b} />)}
               </View>
             </View>
 
-            {/* Extras */}
+            {/* ── Extras ── */}
             <View style={S.extrasRow}>
-              {[{ key: 'wide', label: 'Wide', active: wide, toggle: () => setWide(v => !v), color: T.sky },
-                { key: 'noBall', label: 'No Ball', active: noBall, toggle: () => setNoBall(v => !v), color: T.orange }].map(e => (
-                <Pressable android_ripple={{ color: "rgba(255,255,255,0.12)" }} key={e.key} onPress={e.toggle} style={[S.extraBtn, e.active && { backgroundColor: e.color+'18' }]}>
+              {[
+                { key: 'wide', label: 'Wide', active: wide, toggle: () => setWide(v => !v), color: T.sky },
+                { key: 'noBall', label: 'No Ball', active: noBall, toggle: () => setNoBall(v => !v), color: T.orange },
+              ].map(e => (
+                <Pressable android_ripple={{ color: "rgba(255,255,255,0.12)" }} key={e.key} onPress={e.toggle}
+                  style={[S.extraBtn, e.active && { backgroundColor: e.color+'18' }]}>
                   <View style={[S.extraCheck, { borderColor: e.active ? e.color : T.muted }, e.active && { backgroundColor: e.color+'33' }]}>
                     {e.active && <Text style={{ fontSize: 13, color: e.color }}>✓</Text>}
                   </View>
@@ -835,7 +1146,7 @@ export default function ScoringScreen() {
               ))}
             </View>
 
-            {/* Run buttons */}
+            {/* ── Run Buttons ── */}
             <View style={S.runRow}>
               {[0,1,2,3,4,5,6].map(r => {
                 const sel = runs === r
@@ -850,28 +1161,34 @@ export default function ScoringScreen() {
               })}
             </View>
 
-            {/* Wicket + OK */}
+            {/* ── Wicket + OK ── */}
             <View style={{ flexDirection: 'row', gap: 8, marginHorizontal: 12, marginTop: 8 }}>
-              <Pressable android_ripple={{ color: "rgba(255,255,255,0.12)" }} onPress={() => { setWicket(w => !w); if (!wicket && runs === null) setRuns(0) }}
+              <Pressable android_ripple={{ color: "rgba(255,255,255,0.12)" }}
+                onPress={() => { setWicket(w => !w); if (!wicket && runs === null) setRuns(0) }}
                 style={[S.wicketBtn, wicket && { backgroundColor: 'rgba(100,0,0,0.7)', borderColor: T.accent }]}>
                 <Text style={{ fontSize: 18 }}>{wicket ? '💀' : '🏏'}</Text>
                 <Text style={[S.wicketBtnTxt, wicket && { color: T.accent }]}>{wicket ? 'W ON' : 'WICKET'}</Text>
               </Pressable>
-              <Pressable android_ripple={{ color: "rgba(255,255,255,0.12)" }} onPress={() => { if (wicket) setShowWktMenu(v => !v) }} style={[S.wicketTypeBtn, wicket && { backgroundColor: 'rgba(100,0,0,0.25)', borderColor: T.accent+'44' }]}>
+              <Pressable android_ripple={{ color: "rgba(255,255,255,0.12)" }}
+                onPress={() => { if (wicket) setShowWktMenu(v => !v) }}
+                style={[S.wicketTypeBtn, wicket && { backgroundColor: 'rgba(100,0,0,0.25)', borderColor: T.accent+'44' }]}>
                 <Text style={{ color: wicket ? T.accent : T.text2, fontWeight: '700', fontSize: 14 }}>{wicketType}</Text>
                 {wicket && <Text style={{ color: T.accent, fontSize: 10 }}>▼</Text>}
               </Pressable>
               <Pressable android_ripple={{ color: "rgba(255,255,255,0.12)" }} onPress={handleOK} disabled={!okEnabled}
                 style={[S.okBtn, okEnabled && { backgroundColor: T.accent, shadowColor: '#cc0000', shadowOpacity: 0.6, shadowOffset: { width: 0, height: 4 }, shadowRadius: 10, elevation: 8 }]}>
-                {loading ? <ActivityIndicator color={T.text} size="small" /> : <Text style={[S.okBtnTxt, { color: okEnabled ? T.text : T.muted }]}>OK</Text>}
+                {loading
+                  ? <ActivityIndicator color={T.text} size="small" />
+                  : <Text style={[S.okBtnTxt, { color: okEnabled ? T.text : T.muted }]}>OK</Text>}
               </Pressable>
             </View>
 
-            {/* Wicket dropdown */}
+            {/* Wicket type dropdown */}
             {showWktMenu && wicket && (
               <View style={S.wktDropdown}>
                 {WICKET_TYPES.map(type => (
-                  <Pressable android_ripple={{ color: "rgba(255,255,255,0.12)" }} key={type} onPress={() => { setWicketType(type); setAssistName(''); setShowWktMenu(false) }}
+                  <Pressable android_ripple={{ color: "rgba(255,255,255,0.12)" }} key={type}
+                    onPress={() => { setWicketType(type); setAssistName(''); setShowWktMenu(false) }}
                     style={[S.wktItem, wicketType === type && { backgroundColor: 'rgba(204,0,0,0.15)' }]}>
                     <Text style={{ color: wicketType === type ? T.accent : T.text2, fontWeight: '700', fontSize: 15 }}>{type}</Text>
                   </Pressable>
@@ -879,19 +1196,23 @@ export default function ScoringScreen() {
               </View>
             )}
 
-            {/* Assist field */}
+            {/* Assist / fielder field */}
             {wicket && ASSIST_TYPES.includes(wicketType) && (
               <View style={{ marginHorizontal: 12, marginTop: 6, backgroundColor: 'rgba(100,0,0,0.12)', borderRadius: 11, padding: 10, borderWidth: 1, borderColor: 'rgba(204,0,0,0.15)' }}>
                 <Text style={{ fontSize: 10, color: T.accent, fontWeight: '800', letterSpacing: 1, marginBottom: 8 }}>
                   {wicketType.startsWith('RunOut') ? '⚡ RUN OUT BY' : wicketType === 'Stumped' ? '🧤 STUMPED BY' : '🙌 CAUGHT BY'}
                 </Text>
-                <TextInput value={assistName} onChangeText={setAssistName} placeholder="Fielder / keeper name…" placeholderTextColor={T.muted}
+                <TextInput value={assistName} onChangeText={setAssistName}
+                  placeholder="Fielder / keeper name…" placeholderTextColor={T.muted}
                   style={{ backgroundColor: T.surface, borderRadius: 9, padding: 8, paddingHorizontal: 12, color: T.text, fontSize: 13, borderWidth: 1, borderColor: 'rgba(204,0,0,0.25)' }} />
                 {innings.bowlingStats?.length > 0 && (
                   <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
                     {innings.bowlingStats.map((p: any) => (
                       <Pressable android_ripple={{ color: "rgba(255,255,255,0.12)" }} key={p.name} onPress={() => setAssistName(p.name)}
-                        style={[{ paddingHorizontal: 10, paddingVertical: 5, borderRadius: 7, borderWidth: 1 }, assistName === p.name ? { backgroundColor: 'rgba(204,0,0,0.25)', borderColor: T.accent+'55' } : { backgroundColor: T.border2, borderColor: T.border }]}>
+                        style={[{ paddingHorizontal: 10, paddingVertical: 5, borderRadius: 7, borderWidth: 1 },
+                          assistName === p.name
+                            ? { backgroundColor: 'rgba(204,0,0,0.25)', borderColor: T.accent+'55' }
+                            : { backgroundColor: T.border2, borderColor: T.border }]}>
                         <Text style={{ fontSize: 12, fontWeight: '700', color: assistName === p.name ? T.accent : T.subtext }}>{p.name}</Text>
                       </Pressable>
                     ))}
@@ -900,15 +1221,21 @@ export default function ScoringScreen() {
               </View>
             )}
 
-            {/* Action buttons */}
+            {/* ── Action Buttons ── */}
             <View style={{ flexDirection: 'row', gap: 6, marginHorizontal: 12, marginTop: 8 }}>
-              <Pressable android_ripple={{ color: "rgba(255,255,255,0.12)" }} onPress={() => { setStriker(nonStriker); setNonStriker(striker) }} style={S.actionBtn}>
+              <Pressable android_ripple={{ color: "rgba(255,255,255,0.12)" }}
+                onPress={() => { setStriker(nonStriker); setNonStriker(striker) }}
+                style={S.actionBtn}>
                 <Text style={S.actionBtnTxt}>⇄ SWITCH</Text>
               </Pressable>
-              <Pressable android_ripple={{ color: "rgba(255,255,255,0.12)" }} onPress={() => setUpdateOversOpen(true)} style={[S.actionBtn, { borderColor: T.gold+'44' }]}>
+              <Pressable android_ripple={{ color: "rgba(255,255,255,0.12)" }}
+                onPress={() => setUpdateOversOpen(true)}
+                style={[S.actionBtn, { borderColor: T.gold+'44' }]}>
                 <Text style={[S.actionBtnTxt, { color: T.gold }]}>⏱ OVERS</Text>
               </Pressable>
-              <Pressable android_ripple={{ color: "rgba(255,255,255,0.12)" }} onPress={handleEndInnings} style={[S.actionBtn, { borderColor: T.accent+'44' }]}>
+              <Pressable android_ripple={{ color: "rgba(255,255,255,0.12)" }}
+                onPress={handleEndInnings}
+                style={[S.actionBtn, { borderColor: T.accent+'44' }]}>
                 <Text style={[S.actionBtnTxt, { color: T.accent }]}>END INN</Text>
               </Pressable>
             </View>
@@ -920,7 +1247,7 @@ export default function ScoringScreen() {
         {tab === 'ballbyball' && <BallByBallTab match={match} />}
       </View>
 
-      {/* Bottom tabs */}
+      {/* ── Bottom Tabs ── */}
       <View style={S.bottomTabs}>
         {TABS.map(t => (
           <Pressable android_ripple={{ color: "rgba(255,255,255,0.12)" }} key={t.key} onPress={() => setTab(t.key)} style={S.bottomTab}>
@@ -931,27 +1258,51 @@ export default function ScoringScreen() {
         ))}
       </View>
 
-      {/* Modals */}
-      <PlayerPicker visible={picker === 'striker'} onClose={() => setPicker(null)} onSelect={n => { setStriker(n); setPicker(null) }} title="SET STRIKER" accentColor={T.accent} players={knownBatters} allPlayerInfo={allPlayers} />
-      <PlayerPicker visible={picker === 'nonStriker'} onClose={() => setPicker(null)} onSelect={n => { setNonStriker(n); setPicker(null) }} title="SET NON-STRIKER" accentColor={T.sky} players={knownBatters} allPlayerInfo={allPlayers} />
-      <PlayerPicker visible={picker === 'bowler'} onClose={() => setPicker(null)} onSelect={n => { setBowlerName(n); setPicker(null) }} title="SET BOWLER" accentColor={T.orange} players={knownBowlers} allPlayerInfo={allPlayers} />
+      {/* ── Modals ── */}
+      <PlayerPicker
+        visible={picker === 'striker'} onClose={() => setPicker(null)}
+        onSelect={n => { setStriker(n); setPicker(null) }}
+        title="SET STRIKER" accentColor={T.accent}
+        players={knownBatters} allPlayerInfo={allPlayers} />
+      <PlayerPicker
+        visible={picker === 'nonStriker'} onClose={() => setPicker(null)}
+        onSelect={n => { setNonStriker(n); setPicker(null) }}
+        title="SET NON-STRIKER" accentColor={T.sky}
+        players={knownBatters} allPlayerInfo={allPlayers} />
+      <PlayerPicker
+        visible={picker === 'bowler'} onClose={() => setPicker(null)}
+        onSelect={n => { setBowlerName(n); setPicker(null) }}
+        title="SET BOWLER" accentColor={T.orange}
+        players={knownBowlers} allPlayerInfo={allPlayers} />
 
-      <NewBatsmanModal visible={newBatsmanOpen} outName={striker} wicketType={pendingBall?.wicketType}
+      <NewBatsmanModal
+        visible={newBatsmanOpen}
+        outName={striker}
+        wicketType={pendingBall?.wicketType}
         players={knownBatters.filter(n => n !== striker && n !== nonStriker)}
-        onConfirm={name => { setNewBatsmanOpen(false); submitBall(pendingBall, name); setPendingBall(null) }} />
+        onConfirm={name => {
+          setNewBatsmanOpen(false)
+          submitBall(pendingBall, name)
+          setPendingBall(null)
+        }} />
 
-      <BowlerChangeModal visible={overChangeOpen}
-        players={existingBowlers.length > 0 ? existingBowlers : knownBowlers}
+      <BowlerChangeModal
+        visible={overChangeOpen}
+        players={recordedBowlers.length > 0 ? recordedBowlers : knownBowlers}
         lastBowler={bowlerName}
         onConfirm={name => { setBowlerName(name); setOverChangeOpen(false) }}
         onSkip={() => setOverChangeOpen(false)} />
 
-      <UpdateOversModal visible={updateOversOpen} currentOvers={match.overs}
-        onConfirm={handleUpdateOvers} onClose={() => setUpdateOversOpen(false)} />
+      <UpdateOversModal
+        visible={updateOversOpen}
+        currentOvers={match.overs}
+        onConfirm={handleUpdateOvers}
+        onClose={() => setUpdateOversOpen(false)} />
     </View>
   )
 }
 
+// ── Styles ────────────────────────────────────────────────────────────────────
 const S = StyleSheet.create({
   root: { flex: 1, backgroundColor: T.bg },
 
@@ -971,7 +1322,7 @@ const S = StyleSheet.create({
   rateVal:    { fontSize: 28, fontWeight: '700', color: T.text, textAlign: 'right', fontVariant: ['tabular-nums'] },
 
   playerCard:       { marginHorizontal: 12, marginTop: 8, backgroundColor: T.card, borderWidth: 1, borderColor: T.border, borderRadius: 12, overflow: 'hidden' },
-  playerCardHeader: { flexDirection: 'row', paddingHorizontal: 14, paddingVertical: 4, backgroundColor: T.border2, borderBottomWidth: 1, borderBottomColor: T.border2 },
+  playerCardHeader: { flexDirection: 'row', paddingHorizontal: 14, paddingVertical: 6, backgroundColor: T.border2, borderBottomWidth: 1, borderBottomColor: T.border2 },
   colHdr:           { width: 44, textAlign: 'center', fontSize: 10, color: T.muted, fontWeight: '800' },
   playerRow:        { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: T.border2 },
   playerName:       { color: T.text, fontWeight: '800', fontSize: 14, flex: 1 },

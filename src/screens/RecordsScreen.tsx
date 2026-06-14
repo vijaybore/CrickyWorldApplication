@@ -43,7 +43,12 @@ async function getToken(): Promise<string|null> {
 function fmtOv(b:number) { return `${Math.floor(b/6)}.${b%6}` }
 
 // ── Build career stats from match data ────────────────────────────────────────
-function buildStats(matches: RawMatch[]): PlayerStat[] {
+function buildStats(matches: RawMatch[] = []): PlayerStat[] {
+  if (!Array.isArray(matches)) {
+    console.log('buildStats received invalid matches:', matches)
+    return []
+  }
+
   const map: Record<string, any> = {}
   const ensure = (name:string) => {
     if (!name) return null
@@ -236,7 +241,18 @@ export default function RecordsScreen() {
         fetch(apiUrl('/api/matches'), { headers:h }).then(r=>r.json()),
         fetch(apiUrl('/api/players'), { headers:h }).then(r=>r.json()).catch(()=>({data:[]})),
       ])
-      setMatches(mr as RawMatch[])
+     console.log('MATCH RESPONSE =>', mr)
+
+const matchesData =
+  Array.isArray(mr)
+    ? mr
+    : Array.isArray(mr?.matches)
+    ? mr.matches
+    : Array.isArray(mr?.data)
+    ? mr.data
+    : []
+
+setMatches(matchesData)
       const pm: Record<string,string> = {}
       ;(Array.isArray(pr)?pr:pr.data||[]).forEach((p:any) => { pm[p.name]=p.photoUrl||'' })
       setPhotoMap(pm)
@@ -245,7 +261,14 @@ export default function RecordsScreen() {
     load().catch(()=>setLoading(false))
   }, [])
 
-  const stats = useMemo(() => buildStats(matches).map(s=>({...s, photoUrl:photoMap[s.name]||''})), [matches, photoMap])
+  const stats = useMemo(
+  () =>
+    buildStats(Array.isArray(matches) ? matches : []).map(s => ({
+      ...s,
+      photoUrl: photoMap[s.name] || '',
+    })),
+  [matches, photoMap]
+)
   const batPlayers  = stats.filter(p=>p.balls>0||p.runs>0)
   const bowlPlayers = stats.filter(p=>p.ballsBowled>0||p.wkts>0)
   const fldPlayers  = stats.filter(p=>p.totalDis>0)
