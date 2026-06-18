@@ -12,6 +12,7 @@ export interface Player {
   battingStyle?:     string
   bowlingStyle?:     string
   jerseyNumber?:     string
+  dateOfBirth?:      string
   totalMatches?:     number
   totalRuns?:        number
   totalBallsFaced?:  number
@@ -101,6 +102,7 @@ export interface Match {
   innings2:       Innings
   isLive:         boolean
   isCompleted:    boolean
+  completedAt?:   string
   createdAt?:     string
   updatedAt?:     string
   tournamentId?:  string | null

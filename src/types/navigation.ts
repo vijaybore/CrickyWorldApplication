@@ -19,6 +19,7 @@ export type RootStackParamList = {
 
   Players: undefined
   ManagePlayers: undefined
+  PlayerProfile: { id: string }
 
   Tournaments: undefined
 

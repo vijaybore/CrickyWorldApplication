@@ -1,15 +1,20 @@
 const mongoose = require('mongoose')
 
 const ballSchema = new mongoose.Schema({
-  runs:         { type: Number, default: 0 },
-  isWicket:     { type: Boolean, default: false },
-  isWide:       { type: Boolean, default: false },
-  isNoBall:     { type: Boolean, default: false },
-  batsmanName:  { type: String, default: '' },
-  bowlerName:   { type: String, default: '' },
-  wicketType:   { type: String, default: '' },
-  assistPlayer: { type: String, default: '' },
-  extraRuns:    { type: Number, default: 0 },
+  runs:           { type: Number, default: 0 },
+  isWicket:       { type: Boolean, default: false },
+  isWide:         { type: Boolean, default: false },
+  isNoBall:       { type: Boolean, default: false },
+  batsmanName:    { type: String, default: '' },
+  // The non-striker at the time this ball was bowled. Persisted per-ball
+  // so ball-by-ball history and undo/redo can each independently
+  // reconstruct exactly who was at each end for that specific delivery,
+  // including across strike rotation.
+  nonStrikerName: { type: String, default: '' },
+  bowlerName:     { type: String, default: '' },
+  wicketType:     { type: String, default: '' },
+  assistPlayer:   { type: String, default: '' },
+  extraRuns:      { type: Number, default: 0 },
 }, { _id: false })
 
 const battingStatsSchema = new mongoose.Schema({
@@ -44,6 +49,18 @@ const inningsSchema = new mongoose.Schema({
   ballByBall:   [ballSchema],
   battingStats: [battingStatsSchema],
   bowlingStats: [bowlingStatsSchema],
+  // Persisted crease/bowler state — written after every /ball, /undo, and
+  // /redo call so reopening the match (different session, device, app
+  // restart) restores the exact same striker/non-striker/bowler instead
+  // of guessing from battingStats array order, which breaks whenever the
+  // non-striker hasn't faced a ball yet.
+  currentStriker:    { type: String, default: '' },
+  currentNonStriker: { type: String, default: '' },
+  currentBowler:     { type: String, default: '' },
+  // Balls popped by /undo, most-recently-undone last. /redo pops from
+  // here and replays the ball. Cleared whenever a NEW ball is recorded,
+  // since redo history becomes invalid once the timeline branches.
+  undoStack:    [ballSchema],
 }, { _id: false })
 
 const matchSchema = new mongoose.Schema({

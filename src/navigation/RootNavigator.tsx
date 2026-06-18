@@ -23,6 +23,7 @@ import RecordsScreen       from '../screens/RecordsScreen'
 import SettingsScreen      from '../screens/Settingsscreen'
 import ScoringScreen       from '../screens/ScoringScreen'
 import TournamentsScreen   from '../screens/Tournamentsscreen'
+import PlayerProfileScreen from '../screens/PlayerProfileScreen'
 
 type TabList = {
   HomeTab:     undefined
@@ -96,6 +97,8 @@ function AppStack() {
       <Stack.Screen name="MatchReport"   component={MatchreportScreen} />
       <Stack.Screen name="Players"       component={PlayersScreen} />
       <Stack.Screen name="ManagePlayers" component={ManagePlayersScreen} />
+      <Stack.Screen name="PlayerProfile" component={PlayerProfileScreen}
+        options={{ animation: 'slide_from_right' }} />
       <Stack.Screen name="Tournaments"   component={TournamentsScreen} />
       <Stack.Screen name="Records"       component={RecordsScreen} />
       <Stack.Screen name="Settings"      component={SettingsScreen} />

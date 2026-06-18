@@ -1,12 +1,23 @@
 // src/screens/OpenMatchScreen.tsx
 // ─────────────────────────────────────────────────────────────────────────────
-// CrickyWorld — My Matches
-// • Only shows matches created by the logged-in user
-// • Share button → builds a beautiful scorecard text with:
-//     - Both team scores
-//     - Who won
-//     - Top 3 batsmen per team (runs, balls, SR)
-//     - Top 3 bowlers per team (overs, wickets, economy)
+// FIX in this version:
+//   Tapping the body of a match card (team names, scores — anywhere that
+//   isn't an explicit action button) used to call onOpen for every match,
+//   which for a completed match routed straight to the read-only
+//   MatchReport screen. That meant there was no way to get back into a
+//   finished match to fix a wrong last ball.
+//
+//   Now:
+//     • Tapping the card BODY always opens the Scoring screen — even for
+//       completed matches. ScoringScreen itself is read-only for normal
+//       input (no run/wicket buttons) but keeps Undo available, so this is
+//       exactly the "let me back in to fix the last ball" path.
+//     • Tapping the explicit "Report" button is the ONLY way to reach the
+//       read-only Report/Summary screen.
+//     • The "Resume" button (for live matches) still opens Scoring, same
+//       as before — unchanged.
+//
+// Also: Share button recolored from blue to the app's red accent family.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import React, { useState } from 'react'
@@ -22,6 +33,7 @@ import { useLiveScores }  from '../hooks/useLiveScores'
 import { useFavorites }   from '../hooks/useFavorites'
 import { FavoriteToggle } from '../components/FavoriteToggle'
 import { apiUrl }         from '../services/api'
+import { getDeviceId } from '../services/deviceId'
 import type { Match, BattingStats, BowlingStats, RootStackParamList } from '../types'
 
 type Nav = NativeStackNavigationProp<RootStackParamList>
@@ -36,6 +48,15 @@ function timeAgo(dateStr?: string): string {
   const hrs = Math.floor(mins / 60)
   if (hrs < 24)  return `${hrs}h ago`
   return `${Math.floor(hrs / 24)}d ago`
+}
+
+function fmtDateTime(dateStr?: string | null): string {
+  if (!dateStr) return ''
+  const d = new Date(dateStr)
+  if (isNaN(d.getTime())) return ''
+  const datePart = d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })
+  const timePart = d.toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit', hour12: true })
+  return `${datePart}, ${timePart}`
 }
 
 function fmtOvers(balls: number): string { return `${Math.floor(balls / 6)}.${balls % 6}` }
@@ -57,13 +78,16 @@ function buildShareText(match: Match): string {
   lines.push(divider)
   lines.push(`  ${match.team1} vs ${match.team2}`)
   lines.push(`  ${match.overs} Overs`)
+  if (match.createdAt) lines.push(`  Started: ${fmtDateTime(match.createdAt)}`)
+  if (match.isCompleted) {
+    const ended = match.completedAt || match.updatedAt
+    if (ended) lines.push(`  Ended: ${fmtDateTime(ended)}`)
+}
   lines.push(divider)
 
-  // ── Innings 1 score ────────────────────────────────────────────────────────
   lines.push(`\n🟥  ${t1.toUpperCase()}`)
   lines.push(`    ${inn1.runs}/${inn1.wickets}  (${inn1.overs} ov)  CRR: ${inn1.crr}`)
 
-  // Top 3 batsmen — innings 1
   const bat1 = [...(inn1.battingStats ?? [])]
     .sort((a, b) => b.runs - a.runs)
     .slice(0, 3)
@@ -76,7 +100,6 @@ function buildShareText(match: Match): string {
     })
   }
 
-  // Top 3 bowlers vs innings 1 batsmen (bowl in inn2 → they bowled at inn1 batting team)
   const bowl1 = [...(inn2.bowlingStats ?? [])]
     .sort((a, b) => b.wickets - a.wickets || (a.runs / Math.max(a.balls, 1)) - (b.runs / Math.max(b.balls, 1)))
     .slice(0, 3)
@@ -90,11 +113,9 @@ function buildShareText(match: Match): string {
 
   lines.push('\n' + divider)
 
-  // ── Innings 2 score ────────────────────────────────────────────────────────
   lines.push(`\n🟦  ${t2.toUpperCase()}`)
   lines.push(`    ${inn2.runs}/${inn2.wickets}  (${inn2.overs} ov)  CRR: ${inn2.crr}`)
 
-  // Top 3 batsmen — innings 2
   const bat2 = [...(inn2.battingStats ?? [])]
     .sort((a, b) => b.runs - a.runs)
     .slice(0, 3)
@@ -107,7 +128,6 @@ function buildShareText(match: Match): string {
     })
   }
 
-  // Top 3 bowlers — innings 2 bowling = inn1 bowling stats
   const bowl2 = [...(inn1.bowlingStats ?? [])]
     .sort((a, b) => b.wickets - a.wickets || (a.runs / Math.max(a.balls, 1)) - (b.runs / Math.max(b.balls, 1)))
     .slice(0, 3)
@@ -119,7 +139,6 @@ function buildShareText(match: Match): string {
     })
   }
 
-  // ── Result ─────────────────────────────────────────────────────────────────
   if (match.result) {
     lines.push('\n' + divider)
     lines.push(`\n🏆  ${match.result.toUpperCase()}`)
@@ -146,17 +165,20 @@ const STATUS_CONFIG: Record<string, { text: string; color: string; bg: string }>
 interface MatchCardProps {
   match:    Match
   onOpen:   (m: Match) => void
+  onReport: (m: Match) => void
   onDetails:(m: Match) => void
   onDelete: (id: string) => void
   onShare:  (m: Match) => void
   deleting: string | null
 }
 
-function MatchCard({ match, onOpen, onDetails, onDelete, onShare, deleting }: MatchCardProps) {
+function MatchCard({ match, onOpen, onReport, onDetails, onDelete, onShare, deleting }: MatchCardProps) {
   const st     = STATUS_CONFIG[match.status] ?? STATUS_CONFIG.setup
   const isLive = match.status === 'innings1' || match.status === 'innings2'
   const isDone = match.status === 'completed'
 
+  const startedAt = fmtDateTime(match.createdAt)
+  const endedAt   = isDone ? fmtDateTime(match.completedAt || match.updatedAt) : ''
   return (
     <Pressable
       android_ripple={{ color: 'rgba(255,255,255,0.12)' }}
@@ -204,6 +226,24 @@ function MatchCard({ match, onOpen, onDetails, onDelete, onShare, deleting }: Ma
         </View>
       )}
 
+      {/* Start / End timestamps */}
+      {(startedAt || endedAt) && (
+        <View style={styles.timeBox}>
+          {startedAt && (
+            <View style={styles.timeRow}>
+              <Text style={styles.timeLabel}>▶ Started</Text>
+              <Text style={styles.timeValue}>{startedAt}</Text>
+            </View>
+          )}
+          {endedAt && (
+            <View style={styles.timeRow}>
+              <Text style={styles.timeLabel}>⏹ Ended</Text>
+              <Text style={styles.timeValue}>{endedAt}</Text>
+            </View>
+          )}
+        </View>
+      )}
+
       {/* Footer */}
       <View style={styles.cardFooter}>
         <Text style={styles.timeText}>{timeAgo(match.createdAt)}</Text>
@@ -213,13 +253,24 @@ function MatchCard({ match, onOpen, onDetails, onDelete, onShare, deleting }: Ma
             onPress={() => onDetails(match)} style={styles.detailsBtn}>
             <Text style={styles.detailsBtnText}>📊</Text>
           </Pressable>
-          {/* Open / Report */}
-          <Pressable android_ripple={{ color: 'rgba(255,255,255,0.12)' }}
-            onPress={() => onOpen(match)}
-            style={[styles.openBtn, isLive ? styles.openBtnLive : styles.openBtnDone]}>
-            <Text style={styles.openBtnText}>{isLive ? '▶ Resume' : '📋 Report'}</Text>
-          </Pressable>
-          {/* Share */}
+          {/* Resume (live) opens Scoring directly, same as tapping the
+              card body. Report (done) is now its own distinct button —
+              the ONLY way to reach the read-only report — so it no
+              longer overlaps with "tap the card to keep editing". */}
+          {isLive ? (
+            <Pressable android_ripple={{ color: 'rgba(255,255,255,0.12)' }}
+              onPress={() => onOpen(match)}
+              style={[styles.openBtn, styles.openBtnLive]}>
+              <Text style={styles.openBtnText}>▶ Resume</Text>
+            </Pressable>
+          ) : (
+            <Pressable android_ripple={{ color: 'rgba(255,255,255,0.12)' }}
+              onPress={() => onReport(match)}
+              style={[styles.openBtn, styles.openBtnDone]}>
+              <Text style={styles.openBtnText}>📋 Report</Text>
+            </Pressable>
+          )}
+          {/* Share — recolored to the app's red accent, matching theme */}
           <Pressable android_ripple={{ color: 'rgba(255,255,255,0.12)' }}
             onPress={() => onShare(match)} style={styles.shareBtn}>
             <Text style={styles.shareBtnText}>📤 Share</Text>
@@ -262,34 +313,53 @@ export default function OpenMatchScreen() {
     )
   })
 
+  // ── FIX: tapping the card body (or "Resume") ALWAYS opens Scoring,
+  // even for a completed match. ScoringScreen itself decides what's
+  // editable — full input for live matches, Undo-only for completed
+  // ones — so this is the single path back into a finished match to
+  // fix a wrong last ball and have the result recalculate.
   const handleOpen = (match: Match) => {
-    if (match.isCompleted) navigation.navigate('MatchReport', { id: match.id })
-    else navigation.navigate('Scoring', { id: match.id })
+    navigation.navigate('Scoring', { id: match.id })
   }
+
+  // ── NEW: tapping the explicit "Report" button is the only way to reach
+  // the read-only Report/Summary screen now — decoupled from the card tap.
+  const handleReport = (match: Match) => navigation.navigate('MatchReport', { id: match.id })
 
   const handleDetails = (match: Match) => navigation.navigate('MatchDetails', { id: match.id })
 
   const handleDelete = (id: string) => {
-    Alert.alert('Delete Match', 'Are you sure?', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Delete', style: 'destructive',
-        onPress: async () => {
-          setDeleting(id)
-          try {
-            const token = await AsyncStorage.getItem('token')
-            await fetch(apiUrl(`/api/matches/${id}`), {
-              method: 'DELETE',
-              headers: (token ? { Authorization: `Bearer ${token}` } : {}) as Record<string, string>,
-            })
-            await refresh()
-          } catch { Alert.alert('Error', 'Failed to delete match') }
-          finally  { setDeleting(null) }
-        },
-      },
-    ])
-  }
+  Alert.alert('Delete Match', 'Are you sure?', [
+    { text: 'Cancel', style: 'cancel' },
+    {
+      text: 'Delete', style: 'destructive',
+      onPress: async () => {
+        setDeleting(id)
+        try {
+          const token    = await AsyncStorage.getItem('token').catch(() => null)
+          const deviceId = await getDeviceId()
+          const headers: Record<string, string> = {}
+          if (token) headers.Authorization = `Bearer ${token}`
 
+          const url = !token
+            ? apiUrl(`/api/matches/${id}?deviceId=${deviceId}`)
+            : apiUrl(`/api/matches/${id}`)
+
+          const res = await fetch(url, { method: 'DELETE', headers })
+          if (!res.ok) {
+            const body = await res.json().catch(() => ({}))
+            throw new Error(body.message || 'Failed to delete match')
+          }
+          await refresh()
+        } catch (e: any) {
+          Alert.alert('Error', e?.message || 'Failed to delete match')
+        } finally {
+          setDeleting(null)
+        }
+      },
+    },
+  ])
+}
   // ── Share: opens native share sheet with rich scorecard ───────────────────
   const handleShare = async (match: Match) => {
     try {
@@ -364,6 +434,7 @@ export default function OpenMatchScreen() {
             <MatchCard
               match={item}
               onOpen={handleOpen}
+              onReport={handleReport}
               onDetails={handleDetails}
               onDelete={handleDelete}
               onShare={handleShare}
@@ -444,6 +515,11 @@ const styles = StyleSheet.create({
   resultRow: { paddingHorizontal: 14, paddingBottom: 8 },
   resultText: { fontSize: 12, color: '#f59e0b', fontWeight: '700' },
 
+  timeBox:   { paddingHorizontal: 14, paddingBottom: 8, gap: 2 },
+  timeRow:   { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  timeLabel: { fontSize: 10, color: '#555', fontWeight: '700' },
+  timeValue: { fontSize: 10, color: '#777', fontWeight: '600' },
+
   cardFooter:  { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 12, paddingVertical: 10, borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.04)' },
   timeText:    { fontSize: 10, color: '#2a2a2a', flex: 1 },
   actionsRow:  { flexDirection: 'row', gap: 5, alignItems: 'center' },
@@ -456,8 +532,8 @@ const styles = StyleSheet.create({
   openBtnDone: { backgroundColor: 'rgba(250,204,21,0.12)', borderWidth: 1, borderColor: 'rgba(250,204,21,0.25)' },
   openBtnText: { fontSize: 11, fontWeight: '800', color: '#ddd' },
 
-  shareBtn:     { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8, backgroundColor: 'rgba(99,179,237,0.12)', borderWidth: 1, borderColor: 'rgba(99,179,237,0.3)' },
-  shareBtnText: { fontSize: 11, fontWeight: '800', color: '#63b3ed' },
+  shareBtn:     { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8, backgroundColor: 'rgba(204,0,0,0.10)', borderWidth: 1, borderColor: 'rgba(204,0,0,0.3)' },
+  shareBtnText: { fontSize: 11, fontWeight: '800', color: '#ff6666' },
 
   deleteBtn:     { width: 30, height: 30, borderRadius: 8, backgroundColor: 'rgba(255,255,255,0.04)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.07)', alignItems: 'center', justifyContent: 'center' },
   deleteBtnText: { fontSize: 14 },

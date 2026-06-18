@@ -15,7 +15,7 @@ interface RawMatch {
   team2Players?: string[]; overs?: number; status?: string
   tossWinner?: string; battingFirst?: string; result?: string
   innings1?: RawInnings; innings2?: RawInnings
-  createdAt?: string; updatedAt?: string
+  createdAt?: string; updatedAt?: string; completedAt?: string | null
   createdBy?: string
   tournamentId?: string | null; tournamentName?: string | null
 }
@@ -45,7 +45,7 @@ function normalize(r: RawMatch): Match {
     innings1: makeInnings(r.innings1), innings2: makeInnings(r.innings2),
     isLive: status === 'innings1' || status === 'innings2',
     isCompleted: status === 'completed',
-    createdAt: r.createdAt, updatedAt: r.updatedAt,
+    createdAt: r.createdAt, updatedAt: r.updatedAt, completedAt: r.completedAt ?? null,
     tournamentId: r.tournamentId ?? null, tournamentName: r.tournamentName ?? null,
   }
 }

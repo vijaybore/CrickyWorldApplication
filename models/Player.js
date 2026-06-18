@@ -5,9 +5,14 @@ const playerSchema = new mongoose.Schema({
   createdBy: {
     type:     mongoose.Schema.Types.ObjectId,
     ref:      'User',
-    required: true,
+    required: false,
     index:    true,
   },
+  // Guest (device-only) players are scoped by deviceId instead of createdBy —
+  // mirrors the same pattern Match.js already uses. Previously this field
+  // didn't exist here at all, and createdBy was required:true, so a guest
+  // player (no logged-in user) would fail to save.
+  deviceId: { type: String, default: null, index: true },
 
   // ─── Player info ──────────────────────────────────────────────────────────
   name:          { type: String, required: true, trim: true },
@@ -16,8 +21,9 @@ const playerSchema = new mongoose.Schema({
   battingStyle:  { type: String, default: '' },
   bowlingStyle:  { type: String, default: '' },
   jerseyNumber:  { type: String, default: '' },
+  dateOfBirth:   { type: String, default: '' },
 
-  // ─── Career stats (auto-updated) ─────────────────────────────────────────
+  // ─── Career stats (auto-updated by /sync and after every scored ball) ────
   totalMatches:      { type: Number, default: 0 },
   totalRuns:         { type: Number, default: 0 },
   totalBallsFaced:   { type: Number, default: 0 },
@@ -35,6 +41,11 @@ const playerSchema = new mongoose.Schema({
   fiveWickets:       { type: Number, default: 0 },
   bestBowlingW:      { type: Number, default: 0 },
   bestBowlingR:      { type: Number, default: 0 },
+
+  // ─── Fielding (new — previously not tracked anywhere) ────────────────────
+  catches:           { type: Number, default: 0 },
+  stumpings:         { type: Number, default: 0 },
+  runOuts:           { type: Number, default: 0 },
 
 }, { timestamps: true })
 

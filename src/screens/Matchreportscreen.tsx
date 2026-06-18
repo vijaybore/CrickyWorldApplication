@@ -8,7 +8,7 @@ import React, { useEffect, useRef, useState } from 'react'
 import {
   View, Text, ScrollView, Pressable, Share,
   StyleSheet, ActivityIndicator, StatusBar, Platform,
-  Alert, Modal, Dimensions,
+  Modal, Dimensions,
 } from 'react-native'
 import { useRoute, useNavigation } from '@react-navigation/native'
 import type { RouteProp } from '@react-navigation/native'
@@ -23,6 +23,11 @@ try {
   const vs = require('react-native-view-shot')
   ViewShot = vs.default
   captureRef = vs.captureRef
+} catch (_) {}
+
+let RNHTMLtoPDF: any = null
+try {
+  RNHTMLtoPDF = require('react-native-html-to-pdf').default
 } catch (_) {}
 
 type Route = RouteProp<RootStackParamList, 'MatchReport'>
@@ -75,6 +80,7 @@ const fmtDate = (d?: string) => {
   if (!d) return ''
   return new Date(d).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })
 }
+
 
 function buildTextReport(match: MatchData, inn1: Innings, inn2: Innings): string {
   const pad  = (s: string, n: number) => s.slice(0, n).padEnd(n)
@@ -144,6 +150,122 @@ function buildTextReport(match: MatchData, inn1: Innings, inn2: Innings): string
   ]
   return lines.filter(l => l !== null && l !== undefined).join('\n')
 }
+
+// ── HTML report (opened in browser → user can Print > Save as PDF) ────────────
+function buildHtmlReport(match: MatchData, inn1: Innings, inn2: Innings): string {
+  const esc = (s: string) => String(s ?? '').replace(/[&<>"']/g, c => (
+    { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c] || c
+  ))
+
+  const batRows = (inn: Innings) => (inn.battingStats || []).map(p => `
+    <tr>
+      <td>${esc(p.name)}${p.isOut ? '' : '*'}${p.isOut && p.wicketType
+        ? `<div class="sub">${esc(p.wicketType)}${p.bowlerName ? ` b ${esc(p.bowlerName)}` : ''}</div>`
+        : !p.isOut ? `<div class="sub notout">not out</div>` : ''}</td>
+      <td class="num">${p.runs}</td>
+      <td class="num">${p.balls}</td>
+      <td class="num">${p.fours}</td>
+      <td class="num">${p.sixes}</td>
+      <td class="num">${getSR(p.runs, p.balls)}</td>
+    </tr>`).join('')
+
+  const bowlRows = (inn: Innings) => (inn.bowlingStats || []).map(b => `
+    <tr>
+      <td>${esc(b.name)}</td>
+      <td class="num">${fmtOv(b.balls)}</td>
+      <td class="num">${b.runs}</td>
+      <td class="num">${b.wickets}</td>
+      <td class="num">${getEco(b.runs, b.balls)}</td>
+    </tr>`).join('')
+
+  const inningsBlock = (inn: Innings, bowlingInn: Innings, label: string) => `
+    <div class="inn-card">
+      <div class="inn-head">
+        <span class="inn-label">${esc(label)}</span>
+        <span class="inn-score">${inn.runs}/${inn.wickets} <span class="ov">(${fmtOv(inn.balls)} ov)</span></span>
+      </div>
+      <table>
+        <thead><tr><th>Batter</th><th class="num">R</th><th class="num">B</th><th class="num">4s</th><th class="num">6s</th><th class="num">SR</th></tr></thead>
+        <tbody>${batRows(inn)}
+          <tr class="total"><td>TOTAL</td><td class="num" colspan="5">${inn.runs}/${inn.wickets} (${fmtOv(inn.balls)} ov)</td></tr>
+        </tbody>
+      </table>
+      <table class="bowl-table">
+        <thead><tr><th>Bowler</th><th class="num">O</th><th class="num">R</th><th class="num">W</th><th class="num">Eco</th></tr></thead>
+        <tbody>${bowlRows(bowlingInn)}</tbody>
+      </table>
+    </div>`
+
+  return `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>${esc(match.team1)} vs ${esc(match.team2)} — CrickyWorld Match Report</title>
+<style>
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, Roboto, Arial, sans-serif; margin: 0; padding: 24px; background: #060d18; color: #f1f5f9; }
+  .container { max-width: 640px; margin: 0 auto; }
+  .brand { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+  .brand-name { color: #10b981; font-weight: 800; letter-spacing: 1px; font-size: 14px; }
+  .date { color: #475569; font-size: 12px; }
+  h1 { text-align: center; font-size: 22px; margin: 8px 0 2px; }
+  .overs { text-align: center; color: #94a3b8; font-size: 13px; margin-bottom: 12px; }
+  .summary { background: #0b1628; border: 1px solid #1a2d45; border-radius: 12px; padding: 12px; margin-bottom: 16px; }
+  .score-row { display: flex; justify-content: space-between; align-items: center; padding: 8px 4px; border-top: 1px solid #1a2d45; }
+  .score-row:first-child { border-top: none; }
+  .team { font-weight: 700; font-size: 14px; color: #cbd5e1; }
+  .score { font-weight: 800; font-size: 20px; }
+  .ov { color: #94a3b8; font-size: 12px; font-weight: 400; }
+  .result { text-align: center; color: #f59e0b; font-weight: 800; font-size: 14px; margin-top: 8px; padding-top: 8px; border-top: 1px solid rgba(245,158,11,0.3); }
+  .inn-card { margin-bottom: 16px; }
+  .inn-head { display: flex; justify-content: space-between; align-items: center; background: #0b1628; border-radius: 8px; padding: 8px 10px; margin-bottom: 6px; }
+  .inn-label { color: #94a3b8; font-size: 11px; font-weight: 800; letter-spacing: 1px; text-transform: uppercase; }
+  .inn-score { font-weight: 800; font-size: 16px; }
+  table { width: 100%; border-collapse: collapse; margin-bottom: 6px; font-size: 12px; border: 1px solid #1a2d45; border-radius: 8px; overflow: hidden; }
+  th, td { padding: 6px 8px; text-align: left; border-bottom: 1px solid rgba(255,255,255,0.05); }
+  th { background: #0f1a28; color: #94a3b8; font-size: 10px; letter-spacing: 0.5px; text-transform: uppercase; }
+  .bowl-table th { color: #a78bfa; }
+  .num { text-align: right; font-family: monospace; }
+  .sub { font-size: 10px; color: #475569; }
+  .notout { color: #10b981; }
+  .total td { background: rgba(245,158,11,0.07); color: #f59e0b; font-weight: 800; }
+  .footer { text-align: center; color: #475569; font-size: 11px; margin-top: 20px; }
+  @media print {
+    body { background: #fff; color: #111; }
+    .summary, .inn-head, table, th, td { border-color: #ccc !important; }
+    th { background: #f3f3f3 !important; color: #555 !important; }
+    .total td { background: #fdf3e0 !important; color: #b8860b !important; }
+  }
+</style>
+</head>
+<body>
+  <div class="container">
+    <div class="brand">
+      <span class="brand-name">🏏 CRICKYWORLD</span>
+      <span class="date">${esc(fmtDate(match.createdAt))}</span>
+    </div>
+    <h1>${esc(match.team1)} vs ${esc(match.team2)}</h1>
+    <div class="overs">${match.overs} Overs</div>
+    <div class="summary">
+      <div class="score-row">
+        <span class="team">${esc(inn1.battingTeam || match.team1)}</span>
+        <span class="score">${inn1.runs}/${inn1.wickets} <span class="ov">(${fmtOv(inn1.balls)})</span></span>
+      </div>
+      <div class="score-row">
+        <span class="team">${esc(inn2.battingTeam || match.team2)}</span>
+        <span class="score">${inn2.runs}/${inn2.wickets} <span class="ov">(${fmtOv(inn2.balls)})</span></span>
+      </div>
+      ${match.result ? `<div class="result">🏆 ${esc(match.result)}</div>` : ''}
+    </div>
+    ${inningsBlock(inn1, inn2, `1st Innings · ${inn1.battingTeam || match.team1}`)}
+    ${inningsBlock(inn2, inn1, `2nd Innings · ${inn2.battingTeam || match.team2}`)}
+    <div class="footer">Score. Share. Celebrate. · CrickyWorld<br/>Use your browser's Share/Print menu → Save as PDF</div>
+  </div>
+</body>
+</html>`
+}
+
 
 // ── Scorecard Image (for ViewShot) ────────────────────────────────────────────
 function ScorecardImage({ match, inn1, inn2, forwardRef }: {
@@ -273,9 +395,9 @@ const IMG = StyleSheet.create({
 })
 
 // ── Share Modal ───────────────────────────────────────────────────────────────
-function ShareModal({ visible, onClose, onShareText, onShareImage, isCapturing }: {
+function ShareModal({ visible, onClose, onShareText, onShareImage, onSharePdf, isCapturing }: {
   visible: boolean; onClose: () => void
-  onShareText: () => void; onShareImage: () => void
+  onShareText: () => void; onShareImage: () => void; onSharePdf: () => void
   isCapturing: boolean
 }) {
   return (
@@ -299,6 +421,12 @@ function ShareModal({ visible, onClose, onShareText, onShareImage, isCapturing }
             <Text style={[SM.fmtLabel, { color: T.sky }]}>Text</Text>
             <Text style={SM.fmtSub}>Quick & universal</Text>
           </Pressable>
+          <Pressable onPress={onSharePdf}
+            style={[SM.formatBtn, { borderColor: T.red + '66', backgroundColor: '#2a0e0e' }]}>
+            <Text style={{ fontSize: 28 }}>📕</Text>
+            <Text style={[SM.fmtLabel, { color: T.red }]}>PDF</Text>
+            <Text style={SM.fmtSub}>Print to save</Text>
+          </Pressable>
         </View>
         <Pressable onPress={onClose} style={SM.cancelBtn}>
           <Text style={{ color: T.sub, fontWeight: '700', fontSize: 14 }}>Cancel</Text>
@@ -313,8 +441,8 @@ const SM = StyleSheet.create({
   sheet:     { position: 'absolute', bottom: 0, left: 0, right: 0, backgroundColor: T.card, borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 20, paddingBottom: 40, borderWidth: 1, borderColor: T.border },
   handle:    { width: 40, height: 4, backgroundColor: T.muted, borderRadius: 2, alignSelf: 'center', marginBottom: 18 },
   title:     { color: T.gold, fontSize: 12, fontWeight: '800', letterSpacing: 1.5, textAlign: 'center', marginBottom: 16 },
-  formatRow: { flexDirection: 'row', gap: 12, marginBottom: 20 },
-  formatBtn: { flex: 1, borderRadius: 14, borderWidth: 1.5, padding: 16, alignItems: 'center', gap: 6 },
+  formatRow: { flexDirection: 'row', gap: 10, marginBottom: 20 },
+  formatBtn: { flex: 1, borderRadius: 14, borderWidth: 1.5, paddingVertical: 14, paddingHorizontal: 8, alignItems: 'center', gap: 6 },
   fmtLabel:  { fontWeight: '800', fontSize: 15 },
   fmtSub:    { color: T.muted, fontSize: 11 },
   cancelBtn: { padding: 13, borderRadius: 12, backgroundColor: T.border2, borderWidth: 1, borderColor: T.border, alignItems: 'center' },
@@ -330,6 +458,7 @@ export default function MatchReportScreen() {
   const [loading,   setLoading]   = useState(true)
   const [shareOpen, setShareOpen] = useState(false)
   const [capturing, setCapturing] = useState(false)
+  const [imagePreviewOpen, setImagePreviewOpen] = useState(false)
   const [activeInn, setActiveInn] = useState<'innings1' | 'innings2'>('innings1')
   const shotRef = useRef<any>(null)
 
@@ -386,29 +515,60 @@ export default function MatchReportScreen() {
   }
 
   const handleShareImage = async () => {
-    if (!captureRef || !shotRef.current) {
-      Alert.alert('Image Share Unavailable',
-        'Install react-native-view-shot to enable image sharing.\n\nnpm install react-native-view-shot',
-        [{ text: 'Share as Text', onPress: handleShareText }, { text: 'OK', style: 'cancel' }])
+    if (captureRef && shotRef.current) {
+      try {
+        setCapturing(true)
+        const uri = await captureRef(shotRef.current, { format: 'png', quality: 0.95 })
+        setShareOpen(false)
+        await Share.share({
+          url: uri,
+          message: `${match.team1} vs ${match.team2} — ${match.result || 'Match Report'}\nGenerated by CrickyWorld 🏏`,
+          title: `${match.team1} vs ${match.team2} — CrickyWorld`,
+        })
+      } catch (e: any) {
+        if (!e?.message?.includes('cancel')) {
+          // Fallback: show on-screen scorecard for manual screenshot
+          setImagePreviewOpen(true)
+        }
+      } finally {
+        setCapturing(false)
+        setShareOpen(false)
+      }
       return
     }
-    try {
-      setCapturing(true)
-      const uri = await captureRef(shotRef.current, { format: 'png', quality: 0.95 })
-      await Share.share({
-        url: uri,
-        message: `${match.team1} vs ${match.team2} — ${match.result || 'Match Report'}\nGenerated by CrickyWorld 🏏`,
-        title: `${match.team1} vs ${match.team2} — CrickyWorld`,
-      })
-    } catch (e: any) {
-      if (!e?.message?.includes('cancel')) {
-        Alert.alert('Error', 'Failed to generate image.')
-        handleShareText()
+    // No view-shot available — show on-screen scorecard for manual screenshot
+    setShareOpen(false)
+    setImagePreviewOpen(true)
+  }
+
+  const handleSharePdf = async () => {
+    if (RNHTMLtoPDF) {
+      try {
+        setCapturing(true)
+        const html = buildHtmlReport(match, inn1, inn2)
+        const file = await RNHTMLtoPDF.convert({
+          html,
+          fileName: `MatchReport_${match.team1}_vs_${match.team2}`.replace(/\s+/g, '_'),
+          base64: false,
+        })
+        setShareOpen(false)
+        await Share.share({
+          url: Platform.OS === 'android' ? `file://${file.filePath}` : file.filePath,
+          title: `${match.team1} vs ${match.team2} — CrickyWorld`,
+        })
+      } catch (e: any) {
+        if (!e?.message?.includes('cancel')) {
+          handleShareText()
+        }
+      } finally {
+        setCapturing(false)
+        setShareOpen(false)
       }
-    } finally {
-      setCapturing(false)
-      setShareOpen(false)
+      return
     }
+    // PDF generation unavailable — fall back to text share
+    setShareOpen(false)
+    handleShareText()
   }
 
   // ── Sub-components ────────────────────────────────────────────────────────
@@ -561,12 +721,33 @@ export default function MatchReportScreen() {
           <BowlTable inn={activeInn === 'innings1' ? inn2 : inn1} />
         </View>
 
-        {/* Off-screen image for ViewShot */}
-        <View style={{ position: 'absolute', left: -9999, top: 0 }}>
-          <ScorecardImage match={match} inn1={inn1} inn2={inn2} forwardRef={shotRef} />
-        </View>
-
       </ScrollView>
+
+      {/* Hidden capture target (used only if view-shot works) */}
+      <View style={{ position: 'absolute', left: -9999, top: 0 }}>
+        <ScorecardImage match={match} inn1={inn1} inn2={inn2} forwardRef={shotRef} />
+      </View>
+
+      {/* Full-screen image preview for manual screenshot */}
+      <Modal visible={imagePreviewOpen} animationType="slide" onRequestClose={() => setImagePreviewOpen(false)}>
+        <View style={{ flex: 1, backgroundColor: T.bg }}>
+          <View style={[S.header, { justifyContent: 'space-between' }]}>
+            <Text style={S.headerTitle}>📸 Screenshot to Share</Text>
+            <Pressable android_ripple={{ color: 'rgba(255,255,255,0.12)' }}
+              onPress={() => setImagePreviewOpen(false)} style={S.backBtn}>
+              <Text style={{ color: T.sub, fontSize: 16 }}>✕</Text>
+            </Pressable>
+          </View>
+          <View style={{ padding: 8, backgroundColor: T.card2 }}>
+            <Text style={{ color: T.gold, fontSize: 12, textAlign: 'center', fontWeight: '700' }}>
+              Take a screenshot now and share it from your gallery
+            </Text>
+          </View>
+          <ScrollView contentContainerStyle={{ alignItems: 'center', padding: 16, paddingBottom: 40 }}>
+            <ScorecardImage match={match} inn1={inn1} inn2={inn2} />
+          </ScrollView>
+        </View>
+      </Modal>
 
       {/* FAB */}
       <Pressable android_ripple={{ color: 'rgba(0,0,0,0.2)', radius: 28 }}
@@ -579,6 +760,7 @@ export default function MatchReportScreen() {
         onClose={() => setShareOpen(false)}
         onShareText={handleShareText}
         onShareImage={handleShareImage}
+        onSharePdf={handleSharePdf}
         isCapturing={capturing}
       />
     </View>
