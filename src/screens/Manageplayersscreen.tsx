@@ -1,4 +1,4 @@
-// src/screens/ManagePlayersScreen.tsx
+// src/screens/Manageplayersscreen.tsx
 import React, { useEffect, useState, useRef } from 'react'
 import {
   View, Text, TextInput, Pressable, FlatList,
@@ -37,81 +37,11 @@ function Avatar({ player, size = 44 }: { player: Player; size?: number }) {
   )
 }
 
-// ── Player Profile Modal ──────────────────────────────────────────────────────
-function PlayerProfileModal({ player, onClose }: { player: Player; onClose: () => void }) {
-  const rc = ROLE_COLOR[player.role] || '#555'
-
-  const statRows: { label: string; value: string | number | undefined }[] = [
-    { label: 'Matches',       value: player.totalMatches  },
-    { label: 'Runs',          value: player.totalRuns     },
-    { label: 'Wickets',       value: player.totalWickets  },
-    { label: 'Batting Style', value: player.battingStyle  },
-    { label: 'Bowling Style', value: player.bowlingStyle  },
-    { label: 'Jersey',        value: player.jerseyNumber ? `#${player.jerseyNumber}` : undefined },
-  ].filter(r => r.value !== undefined && r.value !== '' && r.value !== null)
-
-  return (
-    <Modal visible transparent animationType="fade" onRequestClose={onClose}>
-      <Pressable style={P.backdrop} onPress={onClose} />
-      <View style={P.card}>
-        <Pressable onPress={onClose} style={P.closeBtn} android_ripple={{ color: 'rgba(255,255,255,0.12)' }}>
-          <Text style={{ color: '#888', fontSize: 16, fontWeight: '700' }}>✕</Text>
-        </Pressable>
-        <View style={[P.hero, { backgroundColor: bgFor(player.name) }]}>
-          <View style={[P.heroBorder, { borderColor: rc + '55' }]}>
-            <Avatar player={player} size={86} />
-          </View>
-        </View>
-        <View style={P.nameSection}>
-          <Text style={P.playerName}>{player.name}</Text>
-          {player.jerseyNumber ? <Text style={P.jerseyBadge}>#{player.jerseyNumber}</Text> : null}
-          <View style={[P.rolePill, { backgroundColor: rc + '18', borderColor: rc + '44' }]}>
-            <Text style={[P.rolePillTxt, { color: rc }]}>
-              {ROLE_ICON[player.role]}  {ROLE_LABEL[player.role]}
-            </Text>
-          </View>
-        </View>
-        {statRows.length > 0 ? (
-          <View style={P.statsGrid}>
-            {statRows.map(({ label, value }) => (
-              <View key={label} style={P.statCell}>
-                <Text style={P.statValue}>{value}</Text>
-                <Text style={P.statLabel}>{label}</Text>
-              </View>
-            ))}
-          </View>
-        ) : (
-          <View style={{ paddingHorizontal: 24, paddingBottom: 24 }}>
-            <Text style={{ color: '#3a3a3a', fontSize: 13, textAlign: 'center' }}>No stats recorded yet</Text>
-          </View>
-        )}
-      </View>
-    </Modal>
-  )
-}
-
-const P = StyleSheet.create({
-  backdrop:    { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.85)' },
-  card:        { position: 'absolute', top: '15%', left: 24, right: 24, backgroundColor: '#111', borderRadius: 20, overflow: 'hidden', borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)', shadowColor: '#000', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.6, shadowRadius: 24, elevation: 16 },
-  closeBtn:    { position: 'absolute', top: 14, right: 14, zIndex: 10, width: 30, height: 30, borderRadius: 8, backgroundColor: 'rgba(0,0,0,0.5)', borderWidth: 1, borderColor: '#2a2a2a', alignItems: 'center', justifyContent: 'center' },
-  hero:        { height: 110, alignItems: 'center', justifyContent: 'flex-end', paddingBottom: 0 },
-  heroBorder:  { borderWidth: 3, borderRadius: 50, transform: [{ translateY: 43 }], elevation: 8 },
-  nameSection: { alignItems: 'center', paddingTop: 52, paddingBottom: 18, paddingHorizontal: 24, borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.05)' },
-  playerName:  { color: '#f0f0f0', fontSize: 22, fontWeight: '800', letterSpacing: 0.4, textAlign: 'center', marginBottom: 4 },
-  jerseyBadge: { color: '#444', fontSize: 13, fontFamily: 'monospace', marginBottom: 8 },
-  rolePill:    { paddingHorizontal: 14, paddingVertical: 5, borderRadius: 20, borderWidth: 1.5 },
-  rolePillTxt: { fontSize: 12, fontWeight: '800', letterSpacing: 0.5 },
-  statsGrid:   { flexDirection: 'row', flexWrap: 'wrap', paddingHorizontal: 12, paddingVertical: 18 },
-  statCell:    { width: '33.33%', alignItems: 'center', paddingVertical: 10 },
-  statValue:   { color: '#f0f0f0', fontSize: 18, fontWeight: '800', marginBottom: 3 },
-  statLabel:   { color: '#444', fontSize: 10, fontWeight: '700', letterSpacing: 1, textTransform: 'uppercase' },
-})
-
 // ── Add Player Drawer ─────────────────────────────────────────────────────────
 function AddPlayerDrawer({
   onClose,
   onAdded,
-  token,                          // ✅ received from parent
+  token,
 }: {
   onClose: () => void
   onAdded: (p: Player) => void
@@ -132,7 +62,6 @@ function AddPlayerDrawer({
     if (!name.trim()) { setError('Player name is required'); return }
     setSaving(true); setError('')
     try {
-      // ✅ FIX: use the token prop directly — no more getToken() call here
       const res = await fetch(apiUrl('/api/players'), {
         method: 'POST',
         headers: jsonHeaders(token),
@@ -295,7 +224,6 @@ export default function ManagePlayersScreen() {
   const { user, loginWithDevice } = useAuth()
   const navigation = useNavigation<Nav>()
 
-  // ✅ FIX: load token once into state so all operations share the same value
   const [authToken,     setAuthToken]     = useState<string | null>(null)
   const [players,       setPlayers]       = useState<Player[]>([])
   const [loading,       setLoading]       = useState(true)
@@ -304,11 +232,10 @@ export default function ManagePlayersScreen() {
   const [roleFilter,    setRoleFilter]    = useState<'all' | PlayerRole>('all')
   const [showAdd,       setShowAdd]       = useState(false)
   const [fetchError,    setFetchError]    = useState('')
-  const [profilePlayer, setProfilePlayer] = useState<Player | null>(null)
+  const [syncingAll,    setSyncingAll]    = useState(false)
 
   const ALL_FILTER = ['all', ...ROLES] as const
 
-  // ✅ FIX: load token once on mount, then fetch players
   useEffect(() => {
     const init = async () => {
       let t = await AsyncStorage.getItem('token')
@@ -316,7 +243,6 @@ export default function ManagePlayersScreen() {
         const ok = await loginWithDevice()
         if (ok) t = await AsyncStorage.getItem('token')
       }
-      console.log('🔑 Token:', t)
       setAuthToken(t)
       load(t)
     }
@@ -336,19 +262,47 @@ export default function ManagePlayersScreen() {
     }
   }
 
+  // ── FIX: actually check the server's response before updating the list.
+  // Previously this removed the player from the screen unconditionally, even
+  // if the DELETE request failed (e.g. 404 because of an owner mismatch) —
+  // so the player would silently reappear the next time the list reloaded,
+  // which is exactly what "delete doesn't work" looks like from the outside.
   const handleDelete = async (id: string) => {
     setDeleting(id)
     try {
-      await fetch(apiUrl(`/api/players/${id}`), {
+      const res = await fetch(apiUrl(`/api/players/${id}`), {
         method: 'DELETE',
-        headers: authHeaders(authToken),  // ✅ use state token
+        headers: authHeaders(authToken),
       })
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({})) as { message?: string }
+        throw new Error(d.message || `Delete failed (${res.status})`)
+      }
       setPlayers(ps => ps.filter(p => p._id !== id))
-      if (profilePlayer?._id === id) setProfilePlayer(null)
-    } catch {
-      Alert.alert('Error', 'Failed to delete player')
+    } catch (e: any) {
+      Alert.alert('Error', e?.message || 'Failed to delete player')
     } finally {
       setDeleting(null)
+    }
+  }
+
+  // One tap to bring every player's career totals up to date with completed
+  // and in-progress matches — useful right after finishing a match, or to
+  // backfill players who were added before the auto-sync fix shipped.
+  const syncAll = async () => {
+    if (!players.length || syncingAll) return
+    setSyncingAll(true)
+    try {
+      const updated = await Promise.all(
+        players.map(p =>
+          fetch(apiUrl(`/api/players/${p._id}/sync`), { method: 'POST', headers: authHeaders(authToken) })
+            .then(r => (r.ok ? r.json() as Promise<Player> : p))
+            .catch(() => p)
+        )
+      )
+      setPlayers(updated)
+    } finally {
+      setSyncingAll(false)
     }
   }
 
@@ -379,6 +333,11 @@ export default function ManagePlayersScreen() {
             <Text style={S.addBtnTxt}>➕ Add</Text>
           </Pressable>
         </View>
+
+        {/* Sync all */}
+        <Pressable android_ripple={{ color: 'rgba(255,255,255,0.12)' }} onPress={syncAll} disabled={syncingAll || !players.length} style={S.syncBtn}>
+          <Text style={S.syncBtnTxt}>{syncingAll ? '⏳ Syncing every player…' : '↻ Sync All Stats from Matches'}</Text>
+        </Pressable>
 
         {/* Search */}
         <View style={S.searchWrap}>
@@ -444,7 +403,10 @@ export default function ManagePlayersScreen() {
               player={item}
               onDelete={handleDelete}
               deleting={deleting}
-              onPress={setProfilePlayer}
+              // ── FIX: navigate to the real Player Profile screen (Edit, Sync,
+              // Delete, full stat tabs) instead of opening the old read-only
+              // preview card, which had no way to edit anything.
+              onPress={p => navigation.navigate('PlayerProfile', { id: p._id })}
             />
           )}
           contentContainerStyle={{ paddingBottom: 40 }}
@@ -452,17 +414,12 @@ export default function ManagePlayersScreen() {
         />
       )}
 
-      {/* ✅ FIX: pass authToken to AddPlayerDrawer */}
       {showAdd ? (
         <AddPlayerDrawer
           onClose={() => setShowAdd(false)}
           onAdded={p => setPlayers(ps => [p, ...ps])}
           token={authToken}
         />
-      ) : null}
-
-      {profilePlayer ? (
-        <PlayerProfileModal player={profilePlayer} onClose={() => setProfilePlayer(null)} />
       ) : null}
     </View>
   )
@@ -478,6 +435,8 @@ const S = StyleSheet.create({
   subtitle:    { fontSize: 11, color: '#444', fontWeight: '600', marginTop: 1 },
   addBtn:      { paddingHorizontal: 14, paddingVertical: 8, borderRadius: 10, backgroundColor: '#cc0000' },
   addBtnTxt:   { color: '#fff', fontSize: 13, fontWeight: '800' },
+  syncBtn:     { marginHorizontal: 16, marginBottom: 12, padding: 11, borderRadius: 11, backgroundColor: 'rgba(74,222,128,0.08)', borderWidth: 1, borderColor: 'rgba(74,222,128,0.18)', alignItems: 'center' },
+  syncBtnTxt:  { color: '#4ade80', fontSize: 12, fontWeight: '700' },
   searchWrap:  { flexDirection: 'row', alignItems: 'center', gap: 8, marginHorizontal: 14, marginBottom: 10, backgroundColor: '#0a0a0a', borderRadius: 12, borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.07)', paddingHorizontal: 14, paddingVertical: 9 },
   searchInput: { flex: 1, color: '#f0f0f0', fontSize: 14 },
   chip:        { flexShrink: 0, paddingHorizontal: 12, paddingVertical: 5, borderRadius: 20, borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.07)', backgroundColor: 'transparent' },

@@ -5,7 +5,7 @@
 //   • Hero header (avatar, name, role, jersey, DOB)
 //   • Edit profile (name, DOB, jersey, role, batting/bowling style, photo URL)
 //   • Career summary strip
-//   • Full batting & bowling stat tables
+//   • Full batting, bowling & fielding stat tables
 //   • Tournaments played (derived from matches' tournamentName)
 //   • Delete player
 // ─────────────────────────────────────────────────────────────────────────────
@@ -293,7 +293,7 @@ export default function PlayerProfileScreen() {
   const [loading, setLoading] = useState(true)
   const [error,   setError]   = useState('')
   const [editing, setEditing] = useState(false)
-  const [tab,     setTab]     = useState<'batting' | 'bowling'>('batting')
+  const [tab,     setTab]     = useState<'batting' | 'bowling' | 'fielding'>('batting')
   const [syncing, setSyncing] = useState(false)
 
   const load = useCallback(async () => {
@@ -412,8 +412,10 @@ export default function PlayerProfileScreen() {
   const d  = derive(player)
   const rc = ROLE_COLOR[player.role] || '#888'
 
-  const hasBat  = (player.totalRuns ?? 0) > 0 || (player.totalBallsFaced ?? 0) > 0
-  const hasBowl = (player.totalWickets ?? 0) > 0 || (player.totalBallsBowled ?? 0) > 0
+  const hasBat   = (player.totalRuns ?? 0) > 0 || (player.totalBallsFaced ?? 0) > 0
+  const hasBowl  = (player.totalWickets ?? 0) > 0 || (player.totalBallsBowled ?? 0) > 0
+  const totalDis = (player.catches ?? 0) + (player.stumpings ?? 0) + (player.runOuts ?? 0)
+  const hasField = totalDis > 0
 
   const batRows = [
     { label: 'Matches',        value: player.totalMatches,      color: '#f0f0f0' },
@@ -442,7 +444,17 @@ export default function PlayerProfileScreen() {
     { label: '5-Wicket Hauls',  value: player.fiveWickets,         color: '#ff4444' },
   ]
 
-  const rows = tab === 'batting' ? batRows : bowlRows
+  // Fielding now reads straight off the player record — the backend keeps
+  // catches/stumpings/runOuts current automatically, so there's no need to
+  // recompute anything from raw match data here.
+  const fieldRows = [
+    { label: 'Total Dismissals', value: totalDis,             color: '#4ade80' },
+    { label: 'Catches',          value: player.catches ?? 0,  color: '#4ade80' },
+    { label: 'Stumpings',        value: player.stumpings ?? 0, color: '#a78bfa' },
+    { label: 'Run Outs',         value: player.runOuts ?? 0,  color: '#fb923c' },
+  ]
+
+  const rows = tab === 'batting' ? batRows : tab === 'bowling' ? bowlRows : fieldRows
 
   return (
     <View style={S.root}>
@@ -500,11 +512,11 @@ export default function PlayerProfileScreen() {
         {/* Tabs */}
         <SectionHeader icon="📊" title="Career Statistics" />
         <View style={S.tabRow}>
-          {(['batting', 'bowling'] as const).map(t => (
+          {(['batting', 'bowling', 'fielding'] as const).map(t => (
             <Pressable android_ripple={{ color: 'rgba(255,255,255,0.12)' }} key={t} onPress={() => setTab(t)}
               style={[S.tab, tab === t && S.tabActive]}>
-              <Text style={[S.tabTxt, tab === t && { color: t === 'batting' ? '#ff4444' : '#c084fc' }]}>
-                {t === 'batting' ? '🏏 Batting' : '🎳 Bowling'}
+              <Text style={[S.tabTxt, tab === t && { color: t === 'batting' ? '#ff4444' : t === 'bowling' ? '#c084fc' : '#4ade80' }]}>
+                {t === 'batting' ? '🏏 Batting' : t === 'bowling' ? '🎳 Bowling' : '🧤 Fielding'}
               </Text>
             </Pressable>
           ))}
@@ -519,6 +531,9 @@ export default function PlayerProfileScreen() {
         )}
         {tab === 'bowling' && !hasBowl && (
           <Text style={S.emptyNote}>No bowling record yet — stats appear after matches are scored.</Text>
+        )}
+        {tab === 'fielding' && !hasField && (
+          <Text style={S.emptyNote}>No fielding record yet — catches, stumpings and run outs appear after matches are scored.</Text>
         )}
 
         {/* Tournaments */}

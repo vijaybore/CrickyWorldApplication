@@ -334,7 +334,13 @@
 
         {/* Header */}
         <View style={styles.header}>
-          <Pressable android_ripple={{ color: "rgba(255,255,255,0.12)" }} onPress={()=>navigation.goBack()} style={styles.backBtn}>
+          <Pressable android_ripple={{ color: "rgba(255,255,255,0.12)" }} onPress={() => {
+  if (navigation.canGoBack()) {
+    navigation.goBack();
+  } else {
+    navigation.navigate('Home'); // Replace 'Home' with your main screen
+  }
+}} style={styles.backBtn}>
             <Text style={styles.backTxt}>←</Text>
           </Pressable>
           <View style={{ flex:1 }}>

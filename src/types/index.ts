@@ -30,6 +30,10 @@ export interface Player {
   fiveWickets?:      number
   bestBowlingW?:     number
   bestBowlingR?:     number
+   // Fielding Stats
+  catches?:          number
+  stumpings?:        number
+  runOuts?:          number
 }
 
 export interface User {
