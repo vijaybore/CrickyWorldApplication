@@ -106,7 +106,7 @@ export interface Match {
   innings2:       Innings
   isLive:         boolean
   isCompleted:    boolean
-  completedAt?:   string
+  completedAt?:   string | null
   createdAt?:     string
   updatedAt?:     string
   tournamentId?:  string | null

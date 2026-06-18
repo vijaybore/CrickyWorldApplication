@@ -45,7 +45,7 @@ function normalize(r: RawMatch): Match {
     innings1: makeInnings(r.innings1), innings2: makeInnings(r.innings2),
     isLive: status === 'innings1' || status === 'innings2',
     isCompleted: status === 'completed',
-    createdAt: r.createdAt, updatedAt: r.updatedAt, completedAt: r.completedAt ?? null,
+    createdAt: r.createdAt, updatedAt: r.updatedAt, completedAt: r.completedAt ?? undefined,
     tournamentId: r.tournamentId ?? null, tournamentName: r.tournamentName ?? null,
   }
 }
