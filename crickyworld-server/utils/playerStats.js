@@ -1,18 +1,29 @@
 // crickyworld-server/utils/playerStats.js
 //
-// Shared career-stat math for the backend. This is the server-side
-// counterpart to what RecordsScreen used to compute only on the client —
-// having it here means we can persist totals onto the Player document
-// instead of relying on a /sync endpoint that never actually existed.
+// Shared career-stat math for the backend. Used by routes/players.js
+// (POST /api/players/:id/sync) and routes/matches.js (automatic per-ball
+// sync after every scored ball).
 
 function emptyTotals() {
   return {
     totalMatches: 0, totalRuns: 0, totalBallsFaced: 0, totalFours: 0, totalSixes: 0,
     highestScore: 0, timesOut: 0, totalFifties: 0, totalHundreds: 0,
     totalWickets: 0, totalBallsBowled: 0, totalRunsConceded: 0, totalWides: 0,
-    fiveWickets: 0, bestBowlingW: 0, bestBowlingR: 999,
+    fiveWickets: 0, bestBowlingW: 0, bestBowlingR: 0,
     catches: 0, stumpings: 0, runOuts: 0,
   }
+}
+
+// Normalizes a player name for matching purposes: trims surrounding
+// whitespace, collapses internal whitespace runs, and lowercases. This is
+// what lets "V", " V", and "v" all resolve to the same career-stat bucket
+// even though they're scored as separate raw strings on each ball — the
+// Scoring screen lets a name be free-typed (not always picked from an
+// exact-match list), so small casing/whitespace differences between what
+// gets typed during scoring and the stored Player.name are expected, not
+// exceptional.
+function normalizeName(name) {
+  return String(name || '').trim().replace(/\s+/g, ' ').toLowerCase()
 }
 
 // Credits whoever made a dismissal happen. Matches on substrings of
@@ -31,13 +42,20 @@ function creditFielder(ensure, wicketType, bowlerName, assistPlayer) {
   }
 }
 
-// Walks every match's two innings and returns a name -> totals map for every
-// player who batted, bowled, or fielded across the given matches.
+// Walks every match's two innings and returns a map keyed by *normalized*
+// name -> totals (plus a `displayName` holding the first-seen raw casing)
+// for every player who batted, bowled, or fielded across the given matches.
+//
+// Callers that need to look up a specific Player document's stats should
+// use getTotalsForName(map, player.name) below rather than indexing the
+// map directly with a raw name, so a casing/whitespace mismatch can't
+// silently fall through to an empty/zeroed result.
 function buildCareerMap(matches) {
   const map = {}
-  const ensure = name => {
-    if (!map[name]) map[name] = { ...emptyTotals(), matchIds: new Set() }
-    return map[name]
+  const ensure = rawName => {
+    const key = normalizeName(rawName)
+    if (!map[key]) map[key] = { ...emptyTotals(), matchIds: new Set(), displayName: rawName, bestBowlingR: 999 }
+    return map[key]
   }
 
   ;(matches || []).forEach(m => {
@@ -89,4 +107,15 @@ function buildCareerMap(matches) {
   return map
 }
 
-module.exports = { buildCareerMap, emptyTotals }
+// Looks up totals for a given (possibly differently-cased/spaced) name in a
+// map built by buildCareerMap. Returns emptyTotals() if nobody matching that
+// name appears in any match — never throws, never returns undefined.
+function getTotalsForName(map, name) {
+  const key = normalizeName(name)
+  const entry = map[key]
+  if (!entry) return emptyTotals()
+  const { displayName, ...totals } = entry
+  return totals
+}
+
+module.exports = { buildCareerMap, emptyTotals, normalizeName, getTotalsForName }

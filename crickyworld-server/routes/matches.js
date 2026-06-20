@@ -2,7 +2,9 @@
 const express = require('express')
 const router  = express.Router()
 const Match   = require('../models/Match')
+const Player  = require('../models/Player')
 const jwt     = require('jsonwebtoken')
+const { buildCareerMap, getTotalsForName } = require('../utils/playerStats')
 
 function flexAuth(req, res, next) {
   const header = req.headers.authorization
@@ -21,13 +23,70 @@ function flexAuth(req, res, next) {
   return res.status(401).json({ message: 'No token provided' })
 }
 
+function ownerQuery(req) {
+  return req.user.type === 'user' ? { createdBy: req.user.id } : { deviceId: req.user.id }
+}
+
+// Creates a Player document the first time a name is used in this account's
+// scoring, if one doesn't already exist. This is what makes a player typed
+// in during Scoring show up on the Manage Players screen automatically.
+// Previously this server had no equivalent function at all — team1Players/
+// team2Players were just throwaway strings with no link to the Player
+// collection, and no Player document was ever created from scoring.
+//
+// Matches existing players case/whitespace-insensitively so typing "v" when
+// "V" is already registered reuses that player instead of creating a
+// duplicate "v" record.
+async function ensurePlayerExists(name, req) {
+  if (!name) return
+  try {
+    const trimmed = String(name).trim()
+    if (!trimmed) return
+    const existing = await Player.findOne({
+      ...ownerQuery(req),
+      name: { $regex: `^${trimmed.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, $options: 'i' },
+    })
+    if (existing) return
+    await new Player({ name: trimmed, role: 'allrounder', ...ownerQuery(req) }).save()
+  } catch (err) {
+    console.error('Auto-create player failed for', name, err.message)
+  }
+}
+
+// Recomputes and persists career totals for the given names, from every
+// match this account owns. Called after every ball (and after undo) so
+// Profile/Records/Manage Players reflect what was just scored without
+// needing a manual "Sync" tap. Previously this server had no such function,
+// which is the main reason Player.totalRuns etc. could never change no
+// matter how many balls were scored or how many times "Sync" was tapped —
+// the manual /api/players/:id/sync route didn't exist either until this fix.
+async function syncPlayersByName(names, req) {
+  const uniqueNames = [...new Set((names || []).filter(Boolean))]
+  if (!uniqueNames.length) return
+  try {
+    const matches = await Match.find(ownerQuery(req))
+    const map = buildCareerMap(matches)
+    await Promise.all(uniqueNames.map(async name => {
+      const trimmed = String(name).trim()
+      if (!trimmed) return
+      const player = await Player.findOne({
+        ...ownerQuery(req),
+        name: { $regex: `^${trimmed.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, $options: 'i' },
+      })
+      if (!player) return
+      const totals = getTotalsForName(map, player.name)
+      Object.assign(player, totals)
+      await player.save()
+    }))
+  } catch (err) {
+    console.error('Auto-sync after ball failed:', err.message)
+  }
+}
+
 // ── GET /api/matches ──────────────────────────────────────────────────────────
 router.get('/', flexAuth, async (req, res) => {
   try {
-    const query = req.user.type === 'user'
-      ? { createdBy: req.user.id }
-      : { deviceId: req.user.id }
-    const matches = await Match.find(query).sort({ createdAt: -1 })
+    const matches = await Match.find(ownerQuery(req)).sort({ createdAt: -1 })
     res.json(matches)
   } catch (err) {
     console.error('GET /matches error:', err)
@@ -38,10 +97,7 @@ router.get('/', flexAuth, async (req, res) => {
 // ── GET /api/matches/:id ──────────────────────────────────────────────────────
 router.get('/:id', flexAuth, async (req, res) => {
   try {
-    const query = req.user.type === 'user'
-      ? { _id: req.params.id, createdBy: req.user.id }
-      : { _id: req.params.id }
-    const match = await Match.findOne(query)
+    const match = await Match.findOne({ _id: req.params.id, ...ownerQuery(req) })
     if (!match) return res.status(404).json({ message: 'Match not found' })
     res.json(match)
   } catch (err) {
@@ -52,12 +108,7 @@ router.get('/:id', flexAuth, async (req, res) => {
 // ── POST /api/matches ─────────────────────────────────────────────────────────
 router.post('/', flexAuth, async (req, res) => {
   try {
-    const matchData = { ...req.body }
-    if (req.user.type === 'user') {
-      matchData.createdBy = req.user.id
-    } else {
-      matchData.deviceId = req.user.id
-    }
+    const matchData = { ...req.body, ...ownerQuery(req) }
     const match = new Match(matchData)
     await match.save()
     res.status(201).json(match)
@@ -70,16 +121,23 @@ router.post('/', flexAuth, async (req, res) => {
 // ── POST /api/matches/:id/ball ────────────────────────────────────────────────
 router.post('/:id/ball', flexAuth, async (req, res) => {
   try {
-    const query = req.user.type === 'user'
-      ? { _id: req.params.id, createdBy: req.user.id }
-      : { _id: req.params.id }
-    const match = await Match.findOne(query)
+    const match = await Match.findOne({ _id: req.params.id, ...ownerQuery(req) })
     if (!match) return res.status(404).json({ message: 'Match not found' })
 
     const inningsKey = match.status === 'innings1' ? 'innings1' : 'innings2'
     const innings = match[inningsKey]
-    const { runs = 0, isWicket = false, isWide = false, isNoBall = false,
-            wicketType, assistPlayer, batsmanName, bowlerName, extraRuns = 0 } = req.body
+    let { runs = 0, isWicket = false, isWide = false, isNoBall = false,
+          wicketType, assistPlayer, batsmanName, bowlerName, extraRuns = 0 } = req.body
+    batsmanName  = batsmanName?.trim()
+    bowlerName   = bowlerName?.trim()
+    assistPlayer = assistPlayer?.trim()
+
+    // Make sure everyone involved in this ball has a real Player record.
+    await Promise.all([
+      ensurePlayerExists(batsmanName, req),
+      ensurePlayerExists(bowlerName, req),
+      ensurePlayerExists(assistPlayer, req),
+    ])
 
     // Add ball to ballByBall
     innings.ballByBall.push({ runs, isWicket, isWide, isNoBall, wicketType, assistPlayer, batsmanName, bowlerName, extraRuns })
@@ -92,7 +150,12 @@ router.post('/:id/ball', flexAuth, async (req, res) => {
       bat.runs += runs
       if (runs === 4) bat.fours += 1
       if (runs === 6) bat.sixes += 1
-      if (isWicket) { bat.isOut = true; bat.wicketType = wicketType; bat.bowlerName = bowlerName }
+      // FIX: assistPlayer was never recorded onto the battingStats entry
+      // here, even though battingStatsSchema has a field for it and
+      // playerStats.js relies on it to credit catches/stumpings/run outs to
+      // the right fielder. Without this, fielding stats could never be
+      // computed correctly regardless of how sync ran.
+      if (isWicket) { bat.isOut = true; bat.wicketType = wicketType; bat.bowlerName = bowlerName; bat.assistPlayer = assistPlayer }
     }
 
     // Update bowling stats
@@ -152,6 +215,11 @@ router.post('/:id/ball', flexAuth, async (req, res) => {
 
     match.markModified(inningsKey)
     await match.save()
+
+    // Keep Player career totals in sync after every ball, so Profile/
+    // Records/Manage Players never need a manual Sync tap.
+    await syncPlayersByName([batsmanName, bowlerName, assistPlayer], req)
+
     res.json(match)
   } catch (err) {
     console.error('POST /matches/:id/ball error:', err)
@@ -162,10 +230,7 @@ router.post('/:id/ball', flexAuth, async (req, res) => {
 // ── POST /api/matches/:id/undo ────────────────────────────────────────────────
 router.post('/:id/undo', flexAuth, async (req, res) => {
   try {
-    const query = req.user.type === 'user'
-      ? { _id: req.params.id, createdBy: req.user.id }
-      : { _id: req.params.id }
-    const match = await Match.findOne(query)
+    const match = await Match.findOne({ _id: req.params.id, ...ownerQuery(req) })
     if (!match) return res.status(404).json({ message: 'Match not found' })
 
     const inningsKey = match.status === 'innings2' && match.innings2.balls > 0 ? 'innings2' : 'innings1'
@@ -174,7 +239,7 @@ router.post('/:id/undo', flexAuth, async (req, res) => {
       return res.status(400).json({ message: 'Nothing to undo' })
 
     const lastBall = innings.ballByBall.pop()
-    const { runs = 0, isWide, isNoBall, isWicket, batsmanName, bowlerName, extraRuns = 0 } = lastBall
+    const { runs = 0, isWide, isNoBall, isWicket, batsmanName, bowlerName, assistPlayer, extraRuns = 0 } = lastBall
 
     // Reverse batting stats
     if (batsmanName) {
@@ -184,7 +249,7 @@ router.post('/:id/undo', flexAuth, async (req, res) => {
         if (!isWide) bat.balls -= 1
         if (runs === 4) bat.fours -= 1
         if (runs === 6) bat.sixes -= 1
-        if (isWicket) { bat.isOut = false; bat.wicketType = ''; bat.bowlerName = '' }
+        if (isWicket) { bat.isOut = false; bat.wicketType = ''; bat.bowlerName = ''; bat.assistPlayer = '' }
       }
     }
 
@@ -209,6 +274,10 @@ router.post('/:id/undo', flexAuth, async (req, res) => {
 
     match.markModified(inningsKey)
     await match.save()
+
+    // Re-sync the same names so the undo is reflected in career totals too.
+    await syncPlayersByName([batsmanName, bowlerName, assistPlayer], req)
+
     res.json(match)
   } catch (err) {
     console.error('POST /matches/:id/undo error:', err)
@@ -223,11 +292,8 @@ router.patch('/:id/overs', flexAuth, async (req, res) => {
     if (!overs || overs < 1 || overs > 50)
       return res.status(400).json({ message: 'Overs must be between 1 and 50' })
 
-    const query = req.user.type === 'user'
-      ? { _id: req.params.id, createdBy: req.user.id }
-      : { _id: req.params.id }
     const match = await Match.findOneAndUpdate(
-      query,
+      { _id: req.params.id, ...ownerQuery(req) },
       { overs: parseInt(overs) },
       { new: true }
     )
@@ -242,11 +308,8 @@ router.patch('/:id/overs', flexAuth, async (req, res) => {
 // ── PUT /api/matches/:id ──────────────────────────────────────────────────────
 router.put('/:id', flexAuth, async (req, res) => {
   try {
-    const query = req.user.type === 'user'
-      ? { _id: req.params.id, createdBy: req.user.id }
-      : { _id: req.params.id }
     const match = await Match.findOneAndUpdate(
-      query,
+      { _id: req.params.id, ...ownerQuery(req) },
       { ...req.body },
       { new: true, runValidators: true }
     )
@@ -261,10 +324,7 @@ router.put('/:id', flexAuth, async (req, res) => {
 // ── DELETE /api/matches/:id ───────────────────────────────────────────────────
 router.delete('/:id', flexAuth, async (req, res) => {
   try {
-    const query = req.user.type === 'user'
-      ? { _id: req.params.id, createdBy: req.user.id }
-      : { _id: req.params.id }
-    const match = await Match.findOneAndDelete(query)
+    const match = await Match.findOneAndDelete({ _id: req.params.id, ...ownerQuery(req) })
     if (!match) return res.status(404).json({ message: 'Match not found' })
     res.json({ message: 'Match deleted' })
   } catch (err) {

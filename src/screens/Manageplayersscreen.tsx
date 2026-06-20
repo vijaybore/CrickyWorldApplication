@@ -169,32 +169,57 @@ function PlayerCard({
   onPress: (player: Player) => void
 }) {
   const [confirm, setConfirm] = useState(false)
+  const confirmTimeout = useRef<ReturnType<typeof setTimeout> | null>(null)
   const stats: string[] = []
   if ((player.totalRuns    ?? 0) > 0) stats.push(`${player.totalRuns} runs`)
   if ((player.totalWickets ?? 0) > 0) stats.push(`${player.totalWickets} wkts`)
   if ((player.totalMatches ?? 0) > 0) stats.push(`${player.totalMatches} matches`)
   const rc = ROLE_COLOR[player.role] || '#555'
 
+  // Clear any pending "revert confirm state" timeout when this card unmounts
+  // (e.g. the list re-renders after a delete) so it can never fire against a
+  // stale closure and flip a different player's row into the confirm state.
+  useEffect(() => () => {
+    if (confirmTimeout.current) clearTimeout(confirmTimeout.current)
+  }, [])
+
   const handleDelete = () => {
-    if (!confirm) { setConfirm(true); setTimeout(() => setConfirm(false), 3000); return }
+    if (!confirm) {
+      setConfirm(true)
+      confirmTimeout.current = setTimeout(() => setConfirm(false), 3000)
+      return
+    }
+    if (confirmTimeout.current) clearTimeout(confirmTimeout.current)
+    setConfirm(false)
     onDelete(player._id)
   }
 
   return (
-    <Pressable android_ripple={{ color: 'rgba(255,255,255,0.06)' }} onPress={() => onPress(player)} style={C.card}>
-      <Avatar player={player} size={46} />
-      <View style={{ flex: 1, marginLeft: 12 }}>
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 3 }}>
-          <Text style={C.name} numberOfLines={1}>{player.name}</Text>
-          {player.jerseyNumber ? <Text style={C.jersey}>#{player.jerseyNumber}</Text> : null}
-        </View>
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-          <View style={{ paddingHorizontal: 7, paddingVertical: 2, borderRadius: 6, backgroundColor: rc + '18', borderWidth: 1, borderColor: rc + '33' }}>
-            <Text style={{ fontSize: 10, fontWeight: '800', color: rc }}>{ROLE_ICON[player.role]} {ROLE_LABEL[player.role]}</Text>
+    // ── FIX: the delete button used to be nested INSIDE this row's
+    // Pressable. React Native doesn't reliably stop a tap on a nested
+    // Pressable from also firing the outer Pressable's onPress, so tapping
+    // delete could simultaneously navigate to the Player Profile screen —
+    // which is exactly what made the confirm (❗) state look "stuck": the
+    // screen never got a chance to finish its 3-second revert timer before
+    // you'd already navigated away and back. Splitting these into sibling
+    // Pressables inside a plain (non-pressable) row View fixes that, since
+    // there's no longer a parent Pressable for the tap to bubble into.
+    <View style={C.row}>
+      <Pressable android_ripple={{ color: 'rgba(255,255,255,0.06)' }} onPress={() => onPress(player)} style={C.card}>
+        <Avatar player={player} size={46} />
+        <View style={{ flex: 1, marginLeft: 12 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 3 }}>
+            <Text style={C.name} numberOfLines={1}>{player.name}</Text>
+            {player.jerseyNumber ? <Text style={C.jersey}>#{player.jerseyNumber}</Text> : null}
           </View>
-          {stats.length > 0 ? <Text style={C.stats}>{stats.join(' · ')}</Text> : null}
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <View style={{ paddingHorizontal: 7, paddingVertical: 2, borderRadius: 6, backgroundColor: rc + '18', borderWidth: 1, borderColor: rc + '33' }}>
+              <Text style={{ fontSize: 10, fontWeight: '800', color: rc }}>{ROLE_ICON[player.role]} {ROLE_LABEL[player.role]}</Text>
+            </View>
+            {stats.length > 0 ? <Text style={C.stats}>{stats.join(' · ')}</Text> : null}
+          </View>
         </View>
-      </View>
+      </Pressable>
       <Pressable
         android_ripple={{ color: 'rgba(255,255,255,0.12)' }}
         onPress={handleDelete}
@@ -206,16 +231,17 @@ function PlayerCard({
           {deleting === player._id ? '⏳' : confirm ? '❗' : '🗑'}
         </Text>
       </Pressable>
-    </Pressable>
+    </View>
   )
 }
 
 const C = StyleSheet.create({
-  card:   { flexDirection: 'row', alignItems: 'center', paddingVertical: 12, paddingHorizontal: 14, borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.04)' },
+  row:    { flexDirection: 'row', alignItems: 'center', paddingVertical: 12, paddingHorizontal: 14, borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.04)' },
+  card:   { flex: 1, flexDirection: 'row', alignItems: 'center' },
   name:   { fontSize: 14, fontWeight: '700', color: '#f0f0f0' },
   jersey: { fontSize: 10, color: '#444', fontFamily: 'monospace' },
   stats:  { fontSize: 11, color: '#3a3a3a' },
-  delBtn: { width: 32, height: 32, borderRadius: 9, backgroundColor: 'rgba(255,255,255,0.04)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.06)', alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
+  delBtn: { width: 32, height: 32, borderRadius: 9, backgroundColor: 'rgba(255,255,255,0.04)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.06)', alignItems: 'center', justifyContent: 'center', flexShrink: 0, marginLeft: 8 },
   delTxt: { fontSize: 15, color: '#444' },
 })
 
