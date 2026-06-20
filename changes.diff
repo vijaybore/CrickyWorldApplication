@@ -1,0 +1,331 @@
+diff --git a/models/Match.js b/models/Match.js
+index 7f5cd9f..d64b02e 100644
+--- a/models/Match.js
++++ b/models/Match.js
+@@ -50,9 +50,18 @@ const matchSchema = new mongoose.Schema({
+   createdBy: {
+     type:     mongoose.Schema.Types.ObjectId,
+     ref:      'User',
+-    required: true,
++    required: false,
+     index:    true,
+   },
++  // Guest (device-only) matches are scoped by deviceId instead of createdBy —
++  // mirrors the pattern in Player.js. Previously this field didn't exist
++  // here at all and createdBy was required:true, so a guest user (no logged-
++  // in account, device-login not yet registered) could never save a match,
++  // and any guest-scoped query like Match.find({ deviceId }) in matches.js/
++  // players.js would always return zero results even though flexAuth let
++  // the request through.
++  deviceId: { type: String, default: null, index: true },
++
+   team1:         { type: String, required: true, trim: true },
+   team2:         { type: String, required: true, trim: true },
+   team1Players:  [{ type: String }],
+diff --git a/routes/matches.js b/routes/matches.js
+index caa9b1e..1cd8df7 100644
+--- a/routes/matches.js
++++ b/routes/matches.js
+@@ -3,7 +3,7 @@ const router  = express.Router()
+ const Match   = require('../models/Match')
+ const Player  = require('../models/Player')
+ const jwt     = require('jsonwebtoken')
+-const { buildCareerMap } = require('../utils/playerStats')
++const { buildCareerMap, normalizeName, getTotalsForName } = require('../utils/playerStats')
+ 
+ function flexAuth(req, res, next) {
+   const header = req.headers.authorization
+@@ -31,12 +31,21 @@ function ownerQuery(req) {
+ // in during Scoring show up on the Manage Players screen automatically —
+ // previously team1Players/team2Players were just throwaway strings with no
+ // link to the Player collection at all.
++//
++// Matches existing players case/whitespace-insensitively (via a regex on the
++// normalized name) so typing "v" when "V" is already a registered player
++// reuses that player instead of silently creating a duplicate "v" record.
+ async function ensurePlayerExists(name, req) {
+   if (!name) return
+   try {
+-    const existing = await Player.findOne({ name, ...ownerQuery(req) })
++    const trimmed = String(name).trim()
++    if (!trimmed) return
++    const existing = await Player.findOne({
++      ...ownerQuery(req),
++      name: { $regex: `^${trimmed.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, $options: 'i' },
++    })
+     if (existing) return
+-    await new Player({ name, role: 'allrounder', ...ownerQuery(req) }).save()
++    await new Player({ name: trimmed, role: 'allrounder', ...ownerQuery(req) }).save()
+   } catch (err) {
+     console.error('Auto-create player failed for', name, err.message)
+   }
+@@ -53,10 +62,14 @@ async function syncPlayersByName(names, req) {
+     const matches = await Match.find(ownerQuery(req))
+     const map = buildCareerMap(matches)
+     await Promise.all(uniqueNames.map(async name => {
+-      const totals = map[name]
+-      if (!totals) return
+-      const player = await Player.findOne({ name, ...ownerQuery(req) })
++      const trimmed = String(name).trim()
++      if (!trimmed) return
++      const player = await Player.findOne({
++        ...ownerQuery(req),
++        name: { $regex: `^${trimmed.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, $options: 'i' },
++      })
+       if (!player) return
++      const totals = getTotalsForName(map, player.name)
+       Object.assign(player, totals)
+       await player.save()
+     }))
+diff --git a/routes/players.js b/routes/players.js
+index a0917de..00d042c 100644
+--- a/routes/players.js
++++ b/routes/players.js
+@@ -3,7 +3,7 @@ const router  = express.Router()
+ const Player  = require('../models/Player')
+ const Match   = require('../models/Match')
+ const jwt     = require('jsonwebtoken')
+-const { buildCareerMap, emptyTotals } = require('../utils/playerStats')
++const { buildCareerMap, getTotalsForName } = require('../utils/playerStats')
+ 
+ // Flexible auth — works for both logged-in users and guests with deviceId
+ function flexAuth(req, res, next) {
+@@ -90,8 +90,7 @@ router.post('/:id/sync', flexAuth, async (req, res) => {
+ 
+     const matches = await Match.find(ownerQuery(req))
+     const map = buildCareerMap(matches)
+-    const totals = map[player.name] || emptyTotals()
+-    delete totals.matchIds
++    const totals = getTotalsForName(map, player.name)
+ 
+     Object.assign(player, totals)
+     await player.save()
+diff --git a/src/screens/Manageplayersscreen.tsx b/src/screens/Manageplayersscreen.tsx
+index 52bd390..99218f1 100644
+--- a/src/screens/Manageplayersscreen.tsx
++++ b/src/screens/Manageplayersscreen.tsx
+@@ -169,32 +169,57 @@ function PlayerCard({
+   onPress: (player: Player) => void
+ }) {
+   const [confirm, setConfirm] = useState(false)
++  const confirmTimeout = useRef<ReturnType<typeof setTimeout> | null>(null)
+   const stats: string[] = []
+   if ((player.totalRuns    ?? 0) > 0) stats.push(`${player.totalRuns} runs`)
+   if ((player.totalWickets ?? 0) > 0) stats.push(`${player.totalWickets} wkts`)
+   if ((player.totalMatches ?? 0) > 0) stats.push(`${player.totalMatches} matches`)
+   const rc = ROLE_COLOR[player.role] || '#555'
+ 
++  // Clear any pending "revert confirm state" timeout when this card unmounts
++  // (e.g. the list re-renders after a delete) so it can never fire against a
++  // stale closure and flip a different player's row into the confirm state.
++  useEffect(() => () => {
++    if (confirmTimeout.current) clearTimeout(confirmTimeout.current)
++  }, [])
++
+   const handleDelete = () => {
+-    if (!confirm) { setConfirm(true); setTimeout(() => setConfirm(false), 3000); return }
++    if (!confirm) {
++      setConfirm(true)
++      confirmTimeout.current = setTimeout(() => setConfirm(false), 3000)
++      return
++    }
++    if (confirmTimeout.current) clearTimeout(confirmTimeout.current)
++    setConfirm(false)
+     onDelete(player._id)
+   }
+ 
+   return (
+-    <Pressable android_ripple={{ color: 'rgba(255,255,255,0.06)' }} onPress={() => onPress(player)} style={C.card}>
+-      <Avatar player={player} size={46} />
+-      <View style={{ flex: 1, marginLeft: 12 }}>
+-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 3 }}>
+-          <Text style={C.name} numberOfLines={1}>{player.name}</Text>
+-          {player.jerseyNumber ? <Text style={C.jersey}>#{player.jerseyNumber}</Text> : null}
+-        </View>
+-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+-          <View style={{ paddingHorizontal: 7, paddingVertical: 2, borderRadius: 6, backgroundColor: rc + '18', borderWidth: 1, borderColor: rc + '33' }}>
+-            <Text style={{ fontSize: 10, fontWeight: '800', color: rc }}>{ROLE_ICON[player.role]} {ROLE_LABEL[player.role]}</Text>
++    // ── FIX: the delete button used to be nested INSIDE this row's
++    // Pressable. React Native doesn't reliably stop a tap on a nested
++    // Pressable from also firing the outer Pressable's onPress, so tapping
++    // delete could simultaneously navigate to the Player Profile screen —
++    // which is exactly what made the confirm (❗) state look "stuck": the
++    // screen never got a chance to finish its 3-second revert timer before
++    // you'd already navigated away and back. Splitting these into sibling
++    // Pressables inside a plain (non-pressable) row View fixes that, since
++    // there's no longer a parent Pressable for the tap to bubble into.
++    <View style={C.row}>
++      <Pressable android_ripple={{ color: 'rgba(255,255,255,0.06)' }} onPress={() => onPress(player)} style={C.card}>
++        <Avatar player={player} size={46} />
++        <View style={{ flex: 1, marginLeft: 12 }}>
++          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 3 }}>
++            <Text style={C.name} numberOfLines={1}>{player.name}</Text>
++            {player.jerseyNumber ? <Text style={C.jersey}>#{player.jerseyNumber}</Text> : null}
++          </View>
++          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
++            <View style={{ paddingHorizontal: 7, paddingVertical: 2, borderRadius: 6, backgroundColor: rc + '18', borderWidth: 1, borderColor: rc + '33' }}>
++              <Text style={{ fontSize: 10, fontWeight: '800', color: rc }}>{ROLE_ICON[player.role]} {ROLE_LABEL[player.role]}</Text>
++            </View>
++            {stats.length > 0 ? <Text style={C.stats}>{stats.join(' · ')}</Text> : null}
+           </View>
+-          {stats.length > 0 ? <Text style={C.stats}>{stats.join(' · ')}</Text> : null}
+         </View>
+-      </View>
++      </Pressable>
+       <Pressable
+         android_ripple={{ color: 'rgba(255,255,255,0.12)' }}
+         onPress={handleDelete}
+@@ -206,16 +231,17 @@ function PlayerCard({
+           {deleting === player._id ? '⏳' : confirm ? '❗' : '🗑'}
+         </Text>
+       </Pressable>
+-    </Pressable>
++    </View>
+   )
+ }
+ 
+ const C = StyleSheet.create({
+-  card:   { flexDirection: 'row', alignItems: 'center', paddingVertical: 12, paddingHorizontal: 14, borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.04)' },
++  row:    { flexDirection: 'row', alignItems: 'center', paddingVertical: 12, paddingHorizontal: 14, borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.04)' },
++  card:   { flex: 1, flexDirection: 'row', alignItems: 'center' },
+   name:   { fontSize: 14, fontWeight: '700', color: '#f0f0f0' },
+   jersey: { fontSize: 10, color: '#444', fontFamily: 'monospace' },
+   stats:  { fontSize: 11, color: '#3a3a3a' },
+-  delBtn: { width: 32, height: 32, borderRadius: 9, backgroundColor: 'rgba(255,255,255,0.04)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.06)', alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
++  delBtn: { width: 32, height: 32, borderRadius: 9, backgroundColor: 'rgba(255,255,255,0.04)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.06)', alignItems: 'center', justifyContent: 'center', flexShrink: 0, marginLeft: 8 },
+   delTxt: { fontSize: 15, color: '#444' },
+ })
+ 
+diff --git a/utils/playerStats.js b/utils/playerStats.js
+new file mode 100644
+index 0000000..41190b4
+--- /dev/null
++++ b/utils/playerStats.js
+@@ -0,0 +1,127 @@
++// utils/playerStats.js
++//
++// Shared career-stat math for the backend. Used by both routes/players.js
++// (manual "Sync" button / POST /api/players/:id/sync) and routes/matches.js
++// (automatic per-ball sync after every scored ball).
++//
++// IMPORTANT: this file must live at <repo root>/utils/playerStats.js because
++// routes/players.js and routes/matches.js require('../utils/playerStats').
++// It previously didn't exist there at all, which meant any call to /sync (or
++// to per-ball auto-sync) would throw "Cannot find module" the moment that
++// code path was hit.
++
++function emptyTotals() {
++  return {
++    totalMatches: 0, totalRuns: 0, totalBallsFaced: 0, totalFours: 0, totalSixes: 0,
++    highestScore: 0, timesOut: 0, totalFifties: 0, totalHundreds: 0,
++    totalWickets: 0, totalBallsBowled: 0, totalRunsConceded: 0, totalWides: 0,
++    fiveWickets: 0, bestBowlingW: 0, bestBowlingR: 0,
++    catches: 0, stumpings: 0, runOuts: 0,
++  }
++}
++
++// Normalizes a player name for matching purposes: trims surrounding
++// whitespace, collapses internal whitespace runs, and lowercases. This is
++// what lets "V", " V", and "v" all resolve to the same career-stat bucket
++// even though they're scored as separate raw strings on each ball — the
++// Scoring screen lets a name be free-typed (not always picked from an
++// exact-match list), so small casing/whitespace differences between what
++// gets typed during scoring and the stored Player.name are expected, not
++// exceptional.
++function normalizeName(name) {
++  return String(name || '').trim().replace(/\s+/g, ' ').toLowerCase()
++}
++
++// Credits whoever made a dismissal happen. Matches on substrings of
++// wicketType so small wording differences still resolve. If the Scoring
++// screen ever changes how it writes these strings, adjust the checks here.
++function creditFielder(ensure, wicketType, bowlerName, assistPlayer) {
++  if (!wicketType) return
++  const wt = wicketType.toLowerCase()
++  if (wt.includes('run out')) {
++    if (assistPlayer) ensure(assistPlayer).runOuts++
++  } else if (wt.includes('stump')) {
++    if (assistPlayer) ensure(assistPlayer).stumpings++
++  } else if (wt.includes('caught')) {
++    if (wt.includes('and bowled') && bowlerName) ensure(bowlerName).catches++
++    else if (assistPlayer) ensure(assistPlayer).catches++
++  }
++}
++
++// Walks every match's two innings and returns a map keyed by *normalized*
++// name -> totals (plus a `displayName` holding the first-seen raw casing)
++// for every player who batted, bowled, or fielded across the given matches.
++//
++// Callers that need to look up a specific Player document's stats should
++// use getTotalsForName(map, player.name) below rather than indexing the
++// map directly with a raw name, so a casing/whitespace mismatch can't
++// silently fall through to an empty/zeroed result.
++function buildCareerMap(matches) {
++  const map = {}
++  const ensure = rawName => {
++    const key = normalizeName(rawName)
++    if (!map[key]) map[key] = { ...emptyTotals(), matchIds: new Set(), displayName: rawName, bestBowlingR: 999 }
++    return map[key]
++  }
++
++  ;(matches || []).forEach(m => {
++    ;[m.innings1, m.innings2].forEach(inn => {
++      if (!inn) return
++
++      ;(inn.battingStats || []).forEach(b => {
++        if (!b.name) return
++        const s = ensure(b.name)
++        s.matchIds.add(String(m._id))
++        const runs = b.runs || 0
++        s.totalRuns += runs
++        s.totalBallsFaced += b.balls || 0
++        s.totalFours += b.fours || 0
++        s.totalSixes += b.sixes || 0
++        if (runs > s.highestScore) s.highestScore = runs
++        if (b.isOut) {
++          s.timesOut++
++          creditFielder(ensure, b.wicketType, b.bowlerName, b.assistPlayer)
++        }
++        if (runs >= 100) s.totalHundreds++
++        else if (runs >= 50) s.totalFifties++
++      })
++
++      ;(inn.bowlingStats || []).forEach(bw => {
++        if (!bw.name) return
++        const s = ensure(bw.name)
++        s.matchIds.add(String(m._id))
++        const wkts = bw.wickets || 0, runs = bw.runs || 0
++        s.totalWickets += wkts
++        s.totalBallsBowled += bw.balls || 0
++        s.totalRunsConceded += runs
++        s.totalWides += bw.wides || 0
++        if (wkts >= 5) s.fiveWickets++
++        if (wkts > s.bestBowlingW || (wkts === s.bestBowlingW && runs < s.bestBowlingR && wkts > 0)) {
++          s.bestBowlingW = wkts
++          s.bestBowlingR = runs
++        }
++      })
++    })
++  })
++
++  Object.values(map).forEach(s => {
++    s.totalMatches = s.matchIds.size
++    delete s.matchIds
++    if (s.bestBowlingW === 0) s.bestBowlingR = 0
++  })
++
++  return map
++}
++
++// Looks up totals for a given (possibly differently-cased/spaced) name in a
++// map built by buildCareerMap. Returns emptyTotals() if nobody matching that
++// name appears in any match — never throws, never returns undefined.
++function getTotalsForName(map, name) {
++  const key = normalizeName(name)
++  const entry = map[key]
++  if (!entry) return emptyTotals()
++  const { displayName, ...totals } = entry
++  return totals
++}
++
++module.exports = { buildCareerMap, emptyTotals, normalizeName, getTotalsForName }

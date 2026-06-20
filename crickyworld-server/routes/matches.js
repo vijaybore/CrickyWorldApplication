@@ -1,10 +1,10 @@
-//C:\Users\ajayb\OneDrive\Desktop\CrickyWorldApp-main\crickyworld-server\routes\matches.js
 const express = require('express')
 const router  = express.Router()
 const Match   = require('../models/Match')
 const Player  = require('../models/Player')
 const jwt     = require('jsonwebtoken')
-const { buildCareerMap, getTotalsForName } = require('../utils/playerStats')
+const { buildCareerMap, normalizeName, getTotalsForName } = require('../utils/playerStats')
+const { recomputeInnings, recomputeMatchStatus } = require('../utils/recompute')
 
 function flexAuth(req, res, next) {
   const header = req.headers.authorization
@@ -27,16 +27,6 @@ function ownerQuery(req) {
   return req.user.type === 'user' ? { createdBy: req.user.id } : { deviceId: req.user.id }
 }
 
-// Creates a Player document the first time a name is used in this account's
-// scoring, if one doesn't already exist. This is what makes a player typed
-// in during Scoring show up on the Manage Players screen automatically.
-// Previously this server had no equivalent function at all — team1Players/
-// team2Players were just throwaway strings with no link to the Player
-// collection, and no Player document was ever created from scoring.
-//
-// Matches existing players case/whitespace-insensitively so typing "v" when
-// "V" is already registered reuses that player instead of creating a
-// duplicate "v" record.
 async function ensurePlayerExists(name, req) {
   if (!name) return
   try {
@@ -53,13 +43,6 @@ async function ensurePlayerExists(name, req) {
   }
 }
 
-// Recomputes and persists career totals for the given names, from every
-// match this account owns. Called after every ball (and after undo) so
-// Profile/Records/Manage Players reflect what was just scored without
-// needing a manual "Sync" tap. Previously this server had no such function,
-// which is the main reason Player.totalRuns etc. could never change no
-// matter how many balls were scored or how many times "Sync" was tapped —
-// the manual /api/players/:id/sync route didn't exist either until this fix.
 async function syncPlayersByName(names, req) {
   const uniqueNames = [...new Set((names || []).filter(Boolean))]
   if (!uniqueNames.length) return
@@ -81,6 +64,14 @@ async function syncPlayersByName(names, req) {
   } catch (err) {
     console.error('Auto-sync after ball failed:', err.message)
   }
+}
+
+// Small helper: given a match doc + a 'innings1'|'innings2' string, return
+// the actual innings subdocument, validating the key so a bad inningsKey
+// from the client gives a clean 400 instead of a crash.
+function getInnings(match, inningsKey) {
+  if (inningsKey !== 'innings1' && inningsKey !== 'innings2') return null
+  return match[inningsKey]
 }
 
 // ── GET /api/matches ──────────────────────────────────────────────────────────
@@ -127,97 +118,31 @@ router.post('/:id/ball', flexAuth, async (req, res) => {
     const inningsKey = match.status === 'innings1' ? 'innings1' : 'innings2'
     const innings = match[inningsKey]
     let { runs = 0, isWicket = false, isWide = false, isNoBall = false,
-          wicketType, assistPlayer, batsmanName, bowlerName, extraRuns = 0 } = req.body
-    batsmanName  = batsmanName?.trim()
-    bowlerName   = bowlerName?.trim()
-    assistPlayer = assistPlayer?.trim()
+          wicketType, assistPlayer, batsmanName, bowlerName, nonStrikerName, extraRuns = 0 } = req.body
+    batsmanName    = batsmanName?.trim()
+    bowlerName     = bowlerName?.trim()
+    assistPlayer   = assistPlayer?.trim()
+    nonStrikerName = nonStrikerName?.trim()
 
-    // Make sure everyone involved in this ball has a real Player record.
     await Promise.all([
       ensurePlayerExists(batsmanName, req),
       ensurePlayerExists(bowlerName, req),
       ensurePlayerExists(assistPlayer, req),
     ])
 
-    // Add ball to ballByBall
-    innings.ballByBall.push({ runs, isWicket, isWide, isNoBall, wicketType, assistPlayer, batsmanName, bowlerName, extraRuns })
+    innings.ballByBall.push({
+      runs, isWicket, isWide, isNoBall, wicketType, assistPlayer,
+      batsmanName, bowlerName, nonStrikerName, extraRuns,
+    })
+    // A new ball invalidates whatever redo history existed for this innings.
+    innings.redoStack = []
 
-    // Update batting stats
-    if (batsmanName && !isWide) {
-      let bat = innings.battingStats.find(p => p.name === batsmanName)
-      if (!bat) { innings.battingStats.push({ name: batsmanName, runs: 0, balls: 0, fours: 0, sixes: 0, isOut: false }); bat = innings.battingStats[innings.battingStats.length - 1] }
-      if (!isWide) bat.balls += 1
-      bat.runs += runs
-      if (runs === 4) bat.fours += 1
-      if (runs === 6) bat.sixes += 1
-      // FIX: assistPlayer was never recorded onto the battingStats entry
-      // here, even though battingStatsSchema has a field for it and
-      // playerStats.js relies on it to credit catches/stumpings/run outs to
-      // the right fielder. Without this, fielding stats could never be
-      // computed correctly regardless of how sync ran.
-      if (isWicket) { bat.isOut = true; bat.wicketType = wicketType; bat.bowlerName = bowlerName; bat.assistPlayer = assistPlayer }
-    }
-
-    // Update bowling stats
-    if (bowlerName) {
-      let bowl = innings.bowlingStats.find(p => p.name === bowlerName)
-      if (!bowl) { innings.bowlingStats.push({ name: bowlerName, overs: 0, balls: 0, runs: 0, wickets: 0, wides: 0, noBalls: 0 }); bowl = innings.bowlingStats[innings.bowlingStats.length - 1] }
-      bowl.runs += runs + extraRuns
-      if (!isWide && !isNoBall) bowl.balls += 1
-      if (isWide) bowl.wides += 1
-      if (isNoBall) bowl.noBalls += 1
-      if (isWicket) bowl.wickets += 1
-      bowl.overs = bowl.balls / 6
-    }
-
-    // Update innings totals
-    innings.runs += runs + extraRuns
-    if (!isWide && !isNoBall) { innings.balls += 1; innings.wickets += isWicket ? 1 : 0 }
-    innings.overs = `${Math.floor(innings.balls / 6)}.${innings.balls % 6}`
-    innings.crr = innings.balls > 0 ? (innings.runs / (innings.balls / 6)).toFixed(2) : '0.00'
-
-    // Check innings completion
-    const totalBalls = match.overs * 6
-    const maxWickets = 10
-    if (innings.balls >= totalBalls || innings.wickets >= maxWickets) {
-      if (match.status === 'innings1') {
-        match.status = 'innings2'
-        match.innings2.battingTeam = match.innings1.battingTeam === match.team1 ? match.team2 : match.team1
-      } else {
-        match.status = 'completed'
-        match.isCompleted = true
-        match.isLive = false
-        // Calculate result
-        const inn1 = match.innings1, inn2 = match.innings2
-        if (inn2.runs > inn1.runs) {
-          const wktsLeft = 10 - inn2.wickets
-          match.result = `${inn2.battingTeam} won by ${wktsLeft} wicket${wktsLeft !== 1 ? 's' : ''}`
-        } else if (inn1.runs > inn2.runs) {
-          match.result = `${inn1.battingTeam} won by ${inn1.runs - inn2.runs} runs`
-        } else {
-          match.result = 'Match Tied'
-        }
-      }
-    } else {
-      // Check if chasing team won
-      if (match.status === 'innings2') {
-        const target = match.innings1.runs + 1
-        if (innings.runs >= target) {
-          match.status = 'completed'
-          match.isCompleted = true
-          match.isLive = false
-          const wktsLeft = 10 - innings.wickets
-          match.result = `${innings.battingTeam} won by ${wktsLeft} wicket${wktsLeft !== 1 ? 's' : ''}`
-        }
-      }
-      if (match.status !== 'completed') match.isLive = true
-    }
+    recomputeInnings(innings)
+    recomputeMatchStatus(match)
 
     match.markModified(inningsKey)
     await match.save()
 
-    // Keep Player career totals in sync after every ball, so Profile/
-    // Records/Manage Players never need a manual Sync tap.
     await syncPlayersByName([batsmanName, bowlerName, assistPlayer], req)
 
     res.json(match)
@@ -227,60 +152,185 @@ router.post('/:id/ball', flexAuth, async (req, res) => {
   }
 })
 
-// ── POST /api/matches/:id/undo ────────────────────────────────────────────────
-router.post('/:id/undo', flexAuth, async (req, res) => {
+// ── POST /api/matches/:id/undo-last ───────────────────────────────────────────
+// Innings-specific undo. Body: { inningsKey: 'innings1' | 'innings2' }.
+// Pops the last ball from THAT innings (never guesses), pushes it onto
+// redoStack so redo-last can restore it, then replays via recompute and
+// re-derives match status/result. This is what lets you undo your way out
+// of a completed/tied match — recomputeMatchStatus will naturally flip
+// status back to 'innings2' or 'innings1' once the numbers no longer say
+// the match is over.
+router.post('/:id/undo-last', flexAuth, async (req, res) => {
   try {
     const match = await Match.findOne({ _id: req.params.id, ...ownerQuery(req) })
     if (!match) return res.status(404).json({ message: 'Match not found' })
 
-    const inningsKey = match.status === 'innings2' && match.innings2.balls > 0 ? 'innings2' : 'innings1'
-    const innings = match[inningsKey]
-    if (!innings.ballByBall || innings.ballByBall.length === 0)
-      return res.status(400).json({ message: 'Nothing to undo' })
+    const { inningsKey } = req.body
+    const innings = getInnings(match, inningsKey)
+    if (!innings) return res.status(400).json({ message: 'Invalid inningsKey' })
+
+    if (!innings.ballByBall || innings.ballByBall.length === 0) {
+      return res.status(400).json({ message: `Nothing to undo in ${inningsKey === 'innings1' ? '1st Innings' : '2nd Innings'}` })
+    }
 
     const lastBall = innings.ballByBall.pop()
-    const { runs = 0, isWide, isNoBall, isWicket, batsmanName, bowlerName, assistPlayer, extraRuns = 0 } = lastBall
+    innings.redoStack = innings.redoStack || []
+    innings.redoStack.push(lastBall)
 
-    // Reverse batting stats
-    if (batsmanName) {
-      const bat = innings.battingStats.find(p => p.name === batsmanName)
-      if (bat) {
-        bat.runs -= runs
-        if (!isWide) bat.balls -= 1
-        if (runs === 4) bat.fours -= 1
-        if (runs === 6) bat.sixes -= 1
-        if (isWicket) { bat.isOut = false; bat.wicketType = ''; bat.bowlerName = ''; bat.assistPlayer = '' }
-      }
-    }
-
-    // Reverse bowling stats
-    if (bowlerName) {
-      const bowl = innings.bowlingStats.find(p => p.name === bowlerName)
-      if (bowl) {
-        bowl.runs -= (runs + extraRuns)
-        if (!isWide && !isNoBall) bowl.balls -= 1
-        if (isWide) bowl.wides -= 1
-        if (isNoBall) bowl.noBalls -= 1
-        if (isWicket) bowl.wickets -= 1
-        bowl.overs = bowl.balls / 6
-      }
-    }
-
-    // Reverse innings totals
-    innings.runs -= (runs + extraRuns)
-    if (!isWide && !isNoBall) { innings.balls -= 1; innings.wickets -= isWicket ? 1 : 0 }
-    innings.overs = `${Math.floor(innings.balls / 6)}.${innings.balls % 6}`
-    innings.crr = innings.balls > 0 ? (innings.runs / (innings.balls / 6)).toFixed(2) : '0.00'
+    recomputeInnings(innings)
+    recomputeMatchStatus(match)
 
     match.markModified(inningsKey)
     await match.save()
 
-    // Re-sync the same names so the undo is reflected in career totals too.
-    await syncPlayersByName([batsmanName, bowlerName, assistPlayer], req)
+    await syncPlayersByName(
+      [lastBall.batsmanName, lastBall.bowlerName, lastBall.assistPlayer],
+      req
+    )
 
     res.json(match)
   } catch (err) {
-    console.error('POST /matches/:id/undo error:', err)
+    console.error('POST /matches/:id/undo-last error:', err)
+    res.status(500).json({ message: 'Server error' })
+  }
+})
+
+// ── POST /api/matches/:id/redo-last ───────────────────────────────────────────
+// Innings-specific redo. Body: { inningsKey: 'innings1' | 'innings2' }.
+// Pops from that innings' redoStack and pushes it back onto ballByBall.
+router.post('/:id/redo-last', flexAuth, async (req, res) => {
+  try {
+    const match = await Match.findOne({ _id: req.params.id, ...ownerQuery(req) })
+    if (!match) return res.status(404).json({ message: 'Match not found' })
+
+    const { inningsKey } = req.body
+    const innings = getInnings(match, inningsKey)
+    if (!innings) return res.status(400).json({ message: 'Invalid inningsKey' })
+
+    if (!innings.redoStack || innings.redoStack.length === 0) {
+      return res.status(400).json({ message: `Nothing to redo in ${inningsKey === 'innings1' ? '1st Innings' : '2nd Innings'}` })
+    }
+
+    const ball = innings.redoStack.pop()
+    innings.ballByBall.push(ball)
+
+    recomputeInnings(innings)
+    recomputeMatchStatus(match)
+
+    match.markModified(inningsKey)
+    await match.save()
+
+    await syncPlayersByName(
+      [ball.batsmanName, ball.bowlerName, ball.assistPlayer],
+      req
+    )
+
+    res.json(match)
+  } catch (err) {
+    console.error('POST /matches/:id/redo-last error:', err)
+    res.status(500).json({ message: 'Server error' })
+  }
+})
+
+// ── PATCH /api/matches/:id/balls/:inningsKey/:index ───────────────────────────
+// Edits a single ball anywhere in the innings (not just the last one).
+// Replays the whole innings afterward, so totals/stats/crease/match status
+// are exactly consistent with the edited list regardless of where the
+// edited ball sits.
+router.patch('/:id/balls/:inningsKey/:index', flexAuth, async (req, res) => {
+  try {
+    const match = await Match.findOne({ _id: req.params.id, ...ownerQuery(req) })
+    if (!match) return res.status(404).json({ message: 'Match not found' })
+
+    const { inningsKey, index } = req.params
+    const innings = getInnings(match, inningsKey)
+    if (!innings) return res.status(400).json({ message: 'Invalid inningsKey' })
+
+    const idx = parseInt(index, 10)
+    if (!Number.isInteger(idx) || idx < 0 || idx >= innings.ballByBall.length) {
+      return res.status(400).json({ message: 'Invalid ball index' })
+    }
+
+    const existing = innings.ballByBall[idx]
+    const {
+      runs, isWicket, isWide, isNoBall, wicketType, assistPlayer,
+      batsmanName, bowlerName, nonStrikerName,
+    } = req.body
+
+    if (runs !== undefined) existing.runs = runs
+    if (isWicket !== undefined) existing.isWicket = isWicket
+    if (isWide !== undefined) existing.isWide = isWide
+    if (isNoBall !== undefined) existing.isNoBall = isNoBall
+    if (wicketType !== undefined) existing.wicketType = wicketType
+    if (assistPlayer !== undefined) existing.assistPlayer = assistPlayer
+    if (batsmanName !== undefined) existing.batsmanName = batsmanName?.trim()
+    if (bowlerName !== undefined) existing.bowlerName = bowlerName?.trim()
+    if (nonStrikerName !== undefined) existing.nonStrikerName = nonStrikerName?.trim()
+    existing.extraRuns = (existing.isWide || existing.isNoBall) ? 1 : 0
+
+    // Editing the past invalidates any redo history for this innings —
+    // the redo balls were recorded against the pre-edit sequence and can
+    // no longer be replayed onto the edited one.
+    innings.redoStack = []
+
+    await Promise.all([
+      ensurePlayerExists(existing.batsmanName, req),
+      ensurePlayerExists(existing.bowlerName, req),
+      ensurePlayerExists(existing.assistPlayer, req),
+    ])
+
+    recomputeInnings(innings)
+    recomputeMatchStatus(match)
+
+    match.markModified(inningsKey)
+    await match.save()
+
+    await syncPlayersByName(
+      [existing.batsmanName, existing.bowlerName, existing.assistPlayer],
+      req
+    )
+
+    res.json(match)
+  } catch (err) {
+    console.error('PATCH /matches/:id/balls/:inningsKey/:index error:', err)
+    res.status(500).json({ message: 'Server error' })
+  }
+})
+
+// ── DELETE /api/matches/:id/balls/:inningsKey/:index ──────────────────────────
+// Removes one ball entirely (e.g. a mis-recorded ball that shouldn't have
+// counted at all) and replays everything after it.
+router.delete('/:id/balls/:inningsKey/:index', flexAuth, async (req, res) => {
+  try {
+    const match = await Match.findOne({ _id: req.params.id, ...ownerQuery(req) })
+    if (!match) return res.status(404).json({ message: 'Match not found' })
+
+    const { inningsKey, index } = req.params
+    const innings = getInnings(match, inningsKey)
+    if (!innings) return res.status(400).json({ message: 'Invalid inningsKey' })
+
+    const idx = parseInt(index, 10)
+    if (!Number.isInteger(idx) || idx < 0 || idx >= innings.ballByBall.length) {
+      return res.status(400).json({ message: 'Invalid ball index' })
+    }
+
+    const [removed] = innings.ballByBall.splice(idx, 1)
+    innings.redoStack = []
+
+    recomputeInnings(innings)
+    recomputeMatchStatus(match)
+
+    match.markModified(inningsKey)
+    await match.save()
+
+    await syncPlayersByName(
+      [removed.batsmanName, removed.bowlerName, removed.assistPlayer],
+      req
+    )
+
+    res.json(match)
+  } catch (err) {
+    console.error('DELETE /matches/:id/balls/:inningsKey/:index error:', err)
     res.status(500).json({ message: 'Server error' })
   }
 })
@@ -292,12 +342,15 @@ router.patch('/:id/overs', flexAuth, async (req, res) => {
     if (!overs || overs < 1 || overs > 50)
       return res.status(400).json({ message: 'Overs must be between 1 and 50' })
 
-    const match = await Match.findOneAndUpdate(
-      { _id: req.params.id, ...ownerQuery(req) },
-      { overs: parseInt(overs) },
-      { new: true }
-    )
+    const match = await Match.findOne({ _id: req.params.id, ...ownerQuery(req) })
     if (!match) return res.status(404).json({ message: 'Match not found' })
+
+    match.overs = parseInt(overs)
+    // Overs changing can flip whether an innings counts as "done" (e.g.
+    // reducing overs below balls already bowled), so re-derive status too.
+    recomputeMatchStatus(match)
+    await match.save()
+
     res.json(match)
   } catch (err) {
     console.error('PATCH /matches/:id/overs error:', err)

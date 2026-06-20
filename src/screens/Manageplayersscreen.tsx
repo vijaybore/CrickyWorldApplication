@@ -169,41 +169,45 @@ function PlayerCard({
   onPress: (player: Player) => void
 }) {
   const [confirm, setConfirm] = useState(false)
-  const confirmTimeout = useRef<ReturnType<typeof setTimeout> | null>(null)
   const stats: string[] = []
   if ((player.totalRuns    ?? 0) > 0) stats.push(`${player.totalRuns} runs`)
   if ((player.totalWickets ?? 0) > 0) stats.push(`${player.totalWickets} wkts`)
   if ((player.totalMatches ?? 0) > 0) stats.push(`${player.totalMatches} matches`)
   const rc = ROLE_COLOR[player.role] || '#555'
 
-  // Clear any pending "revert confirm state" timeout when this card unmounts
-  // (e.g. the list re-renders after a delete) so it can never fire against a
-  // stale closure and flip a different player's row into the confirm state.
-  useEffect(() => () => {
-    if (confirmTimeout.current) clearTimeout(confirmTimeout.current)
-  }, [])
-
-  const handleDelete = () => {
-    if (!confirm) {
-      setConfirm(true)
-      confirmTimeout.current = setTimeout(() => setConfirm(false), 3000)
-      return
-    }
-    if (confirmTimeout.current) clearTimeout(confirmTimeout.current)
-    setConfirm(false)
-    onDelete(player._id)
+  // ── FIX (round 2): the original "tap once to arm, tap again within 3s to
+  // confirm" pattern technically worked — verified via diagnostic logging
+  // that confirm correctly went false→true→false on a ~3s timer — but 3
+  // seconds isn't enough time for a real person to notice the icon changed,
+  // process it, and tap again, especially over a slower connection or while
+  // checking the screen. The fix isn't a longer timer; it's removing the
+  // race entirely. Tapping delete now reveals explicit Cancel/Confirm
+  // buttons that simply stay until the person acts on them — no countdown,
+  // no way to "miss the window".
+  if (confirm) {
+    return (
+      <View style={C.row}>
+        <View style={C.confirmWrap}>
+          <Text style={C.confirmTxt} numberOfLines={1}>Delete {player.name}?</Text>
+          <Pressable android_ripple={{ color: 'rgba(255,255,255,0.12)' }} onPress={() => setConfirm(false)} style={C.cancelBtn}>
+            <Text style={C.cancelTxt}>Cancel</Text>
+          </Pressable>
+          <Pressable
+            android_ripple={{ color: 'rgba(255,255,255,0.12)' }}
+            onPress={() => { setConfirm(false); onDelete(player._id) }}
+            disabled={deleting === player._id}
+            style={C.confirmBtn}
+          >
+            {deleting === player._id
+              ? <ActivityIndicator color="#fff" size="small" />
+              : <Text style={C.confirmBtnTxt}>Delete</Text>}
+          </Pressable>
+        </View>
+      </View>
+    )
   }
 
   return (
-    // ── FIX: the delete button used to be nested INSIDE this row's
-    // Pressable. React Native doesn't reliably stop a tap on a nested
-    // Pressable from also firing the outer Pressable's onPress, so tapping
-    // delete could simultaneously navigate to the Player Profile screen —
-    // which is exactly what made the confirm (❗) state look "stuck": the
-    // screen never got a chance to finish its 3-second revert timer before
-    // you'd already navigated away and back. Splitting these into sibling
-    // Pressables inside a plain (non-pressable) row View fixes that, since
-    // there's no longer a parent Pressable for the tap to bubble into.
     <View style={C.row}>
       <Pressable android_ripple={{ color: 'rgba(255,255,255,0.06)' }} onPress={() => onPress(player)} style={C.card}>
         <Avatar player={player} size={46} />
@@ -222,14 +226,12 @@ function PlayerCard({
       </Pressable>
       <Pressable
         android_ripple={{ color: 'rgba(255,255,255,0.12)' }}
-        onPress={handleDelete}
+        onPress={() => setConfirm(true)}
         disabled={deleting === player._id}
-        style={[C.delBtn, confirm && { borderColor: '#f87171', backgroundColor: 'rgba(248,113,113,0.2)' }]}
+        style={C.delBtn}
         hitSlop={8}
       >
-        <Text style={[C.delTxt, confirm && { color: '#f87171' }]}>
-          {deleting === player._id ? '⏳' : confirm ? '❗' : '🗑'}
-        </Text>
+        <Text style={C.delTxt}>{deleting === player._id ? '⏳' : '🗑'}</Text>
       </Pressable>
     </View>
   )
@@ -243,6 +245,13 @@ const C = StyleSheet.create({
   stats:  { fontSize: 11, color: '#3a3a3a' },
   delBtn: { width: 32, height: 32, borderRadius: 9, backgroundColor: 'rgba(255,255,255,0.04)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.06)', alignItems: 'center', justifyContent: 'center', flexShrink: 0, marginLeft: 8 },
   delTxt: { fontSize: 15, color: '#444' },
+  // No-timer confirm row: replaces the old "tap, wait ≤3s, tap again" flow.
+  confirmWrap: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 8 },
+  confirmTxt:  { flex: 1, fontSize: 13, fontWeight: '700', color: '#f87171' },
+  cancelBtn:   { paddingHorizontal: 12, paddingVertical: 7, borderRadius: 9, backgroundColor: '#1a1a1a', borderWidth: 1, borderColor: '#2a2a2a' },
+  cancelTxt:   { color: '#888', fontSize: 12, fontWeight: '800' },
+  confirmBtn:    { paddingHorizontal: 14, paddingVertical: 7, borderRadius: 9, backgroundColor: '#cc0000', minWidth: 64, alignItems: 'center', justifyContent: 'center' },
+  confirmBtnTxt: { color: '#fff', fontSize: 12, fontWeight: '800' },
 })
 
 // ── MAIN SCREEN ───────────────────────────────────────────────────────────────

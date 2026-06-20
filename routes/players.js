@@ -3,7 +3,7 @@ const router  = express.Router()
 const Player  = require('../models/Player')
 const Match   = require('../models/Match')
 const jwt     = require('jsonwebtoken')
-const { buildCareerMap, emptyTotals } = require('../utils/playerStats')
+const { buildCareerMap, getTotalsForName } = require('../utils/playerStats')
 
 // Flexible auth — works for both logged-in users and guests with deviceId
 function flexAuth(req, res, next) {
@@ -90,8 +90,7 @@ router.post('/:id/sync', flexAuth, async (req, res) => {
 
     const matches = await Match.find(ownerQuery(req))
     const map = buildCareerMap(matches)
-    const totals = map[player.name] || emptyTotals()
-    delete totals.matchIds
+    const totals = getTotalsForName(map, player.name)
 
     Object.assign(player, totals)
     await player.save()
