@@ -38,11 +38,11 @@ export default function RegisterScreen() {
         headers: { 'Content-Type': 'application/json' },
         body:    JSON.stringify({ name: name.trim(), email: email.trim().toLowerCase(), password }),
       })
-      const data = await res.json() as { message?: string; needsVerification?: boolean; email?: string }
+      const data = await res.json() as { message?: string; otpRequired?: boolean; email?: string }
       if (!res.ok) { setError(data.message ?? 'Registration failed'); return }
 
-      // Navigate to verify screen
-    navigation.navigate('VerifyEmail', { email: email.trim().toLowerCase() })
+      // Navigate to OTP screen — account is created but unverified until the code is confirmed
+      navigation.navigate('VerifyEmail', { email: data.email ?? email.trim().toLowerCase(), purpose: 'register' })
     } catch (e: unknown) {
       setError((e as Error).message ?? 'Registration failed. Please try again.')
     } finally {

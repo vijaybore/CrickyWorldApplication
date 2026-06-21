@@ -7,13 +7,23 @@ import { apiUrl } from '../services/api'
 import { getDeviceId } from '../services/deviceId'
 import type { User } from '../types'
 
+export type OtpPurpose = 'register' | 'login'
+
+interface LoginResult {
+  purpose: OtpPurpose
+  email:   string
+  message?: string
+}
+
 interface AuthContextValue {
   user:            User | null
   loading:         boolean
   isGuest:         boolean
   deviceId:        string | null
-  loginWithEmail:  (email: string, password: string) => Promise<void>
+  loginWithEmail:  (email: string, password: string) => Promise<LoginResult>
   register:        (name: string, email: string, password: string) => Promise<void>
+  verifyOtp:       (email: string, otp: string, purpose: OtpPurpose) => Promise<void>
+  resendOtp:       (email: string, purpose: OtpPurpose) => Promise<string>
   loginWithDevice: () => Promise<boolean>
   continueAsGuest: () => void
   logout:          () => Promise<void>
@@ -59,7 +69,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           } catch { }
         }
 
-        // Try device login
+        // Try device login (silent re-auth — does NOT require OTP)
         try {
           const res = await fetch(apiUrl('/api/auth/device-login'), {
             method:  'POST',
@@ -85,25 +95,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     init()
   }, [])
 
-  const loginWithEmail = useCallback(async (email: string, password: string): Promise<void> => {
-    const did = await getDeviceId()
+  // Step 1 of login: verifies the password and triggers an OTP email.
+  // Does NOT set the user/token — that only happens after verifyOtp succeeds.
+  const loginWithEmail = useCallback(async (email: string, password: string): Promise<LoginResult> => {
     const res = await fetch(apiUrl('/api/auth/login'), {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify({ email, password, deviceId: did }),
+      body:    JSON.stringify({ email, password }),
     })
-    const data = await res.json() as { token?: string; user?: User; message?: string; needsVerification?: boolean; email?: string }
-    if (!res.ok) {
-      const err: Error & { needsVerification?: boolean } = new Error(data.message ?? 'Login failed')
-      err.needsVerification = data.needsVerification
-      throw err
-    }
-    await AsyncStorage.setItem('token', data.token!)
-    await AsyncStorage.setItem('user',  JSON.stringify(data.user!))
-    await AsyncStorage.removeItem('isGuest')
-    setIsGuest(false)
-    setDeviceId(did)
-    setUser(data.user!)
+    const data = await res.json() as { message?: string; otpRequired?: boolean; purpose?: OtpPurpose; email?: string }
+    if (!res.ok) throw new Error(data.message ?? 'Login failed')
+    return { purpose: data.purpose ?? 'login', email: data.email ?? email, message: data.message }
   }, [])
 
   const register = useCallback(async (name: string, email: string, password: string): Promise<void> => {
@@ -114,6 +116,36 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     })
     const data = await res.json() as { message?: string }
     if (!res.ok) throw new Error(data.message ?? 'Registration failed')
+  }, [])
+
+  // Step 2 of both register-verification and login-2FA: confirms the code
+  // emailed to the user, then completes auth (stores token, sets user state).
+  const verifyOtp = useCallback(async (email: string, otp: string, purpose: OtpPurpose): Promise<void> => {
+    const did = await getDeviceId()
+    const res = await fetch(apiUrl('/api/auth/verify-otp'), {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ email, otp, purpose, deviceId: did }),
+    })
+    const data = await res.json() as { token?: string; user?: User; message?: string }
+    if (!res.ok) throw new Error(data.message ?? 'Invalid code')
+    await AsyncStorage.setItem('token', data.token!)
+    await AsyncStorage.setItem('user',  JSON.stringify(data.user!))
+    await AsyncStorage.removeItem('isGuest')
+    setIsGuest(false)
+    setDeviceId(did)
+    setUser(data.user!)
+  }, [])
+
+  const resendOtp = useCallback(async (email: string, purpose: OtpPurpose): Promise<string> => {
+    const res = await fetch(apiUrl('/api/auth/resend-otp'), {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ email, purpose }),
+    })
+    const data = await res.json() as { message?: string }
+    if (!res.ok) throw new Error(data.message ?? 'Failed to resend code')
+    return data.message ?? 'Code sent!'
   }, [])
 
   const loginWithDevice = useCallback(async (): Promise<boolean> => {
@@ -147,7 +179,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [])
 
   return (
-    <AuthContext.Provider value={{ user, loading, isGuest, deviceId, loginWithEmail, register, loginWithDevice, continueAsGuest, logout }}>
+    <AuthContext.Provider value={{
+      user, loading, isGuest, deviceId,
+      loginWithEmail, register, verifyOtp, resendOtp,
+      loginWithDevice, continueAsGuest, logout,
+    }}>
       {children}
     </AuthContext.Provider>
   )

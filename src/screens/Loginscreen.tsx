@@ -28,15 +28,11 @@ export default function LoginScreen() {
     if (!/\S+@\S+\.\S+/.test(email)) { setError('Enter a valid email address'); return }
     setLoading(true)
     try {
-      await loginWithEmail(email.trim().toLowerCase(), password)
-      navigation.dispatch(CommonActions.reset({ index: 0, routes: [{ name: 'Home' }] }))
+      // Password is correct — server has emailed an OTP. Navigate to enter it.
+      const { purpose, email: confirmedEmail } = await loginWithEmail(email.trim().toLowerCase(), password)
+      navigation.navigate('VerifyEmail', { email: confirmedEmail, purpose })
     } catch (e: unknown) {
-      const err = e as Error & { needsVerification?: boolean }
-      if (err.needsVerification) {
-        navigation.navigate('VerifyEmail', { email: email.trim().toLowerCase() })
-        return
-      }
-      setError(err.message ?? 'Login failed. Please try again.')
+      setError((e as Error).message ?? 'Login failed. Please try again.')
     } finally { setLoading(false) }
   }
 
