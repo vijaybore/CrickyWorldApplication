@@ -5,18 +5,75 @@ const jwt     = require('jsonwebtoken')
 const bcrypt  = require('bcryptjs')
 const crypto  = require('crypto')
 const User    = require('../models/User')
-const nodemailer = require('nodemailer')
 
-const transporter = nodemailer.createTransport({
-  host: 'smtp.gmail.com',
-  port: 587,
-  secure: false,
-  auth: {
-    user: process.env.GMAIL_USER,
-    pass: process.env.GMAIL_PASS,
-  },
-  family: 4,
-})
+// ── Gmail REST API (OAuth2) ───────────────────────────────────────────────
+// Sends over HTTPS via Gmail's own API instead of SMTP, so it isn't affected
+// by Render free tier's block on outbound ports 25/465/587. Still sends from
+// your own Gmail account — just authenticated with OAuth2 instead of SMTP.
+const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token'
+const GMAIL_SEND_URL   = 'https://gmail.googleapis.com/gmail/v1/users/me/messages/send'
+
+async function getAccessToken() {
+  const res = await fetch(GOOGLE_TOKEN_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      client_id: process.env.GOOGLE_CLIENT_ID,
+      client_secret: process.env.GOOGLE_CLIENT_SECRET,
+      refresh_token: process.env.GOOGLE_REFRESH_TOKEN,
+      grant_type: 'refresh_token',
+    }),
+  })
+  const data = await res.json()
+  if (!res.ok) {
+    console.error('Failed to refresh Google access token:', JSON.stringify(data))
+    throw new Error('Failed to authenticate with Gmail API')
+  }
+  return data.access_token
+}
+
+function buildRawEmail({ from, to, subject, html }) {
+  const encodedSubject = `=?utf-8?B?${Buffer.from(subject, 'utf-8').toString('base64')}?=`
+  const message = [
+    `From: "CrickyWorld 🏏" <${from}>`,
+    `To: ${to}`,
+    'Content-Type: text/html; charset=utf-8',
+    'MIME-Version: 1.0',
+    `Subject: ${encodedSubject}`,
+    '',
+    html,
+  ].join('\n')
+
+  return Buffer.from(message)
+    .toString('base64')
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/, '')
+}
+
+async function sendMail(to, subject, html) {
+  try {
+    const accessToken = await getAccessToken()
+    const raw = buildRawEmail({ from: process.env.GMAIL_USER, to, subject, html })
+
+    const res = await fetch(GMAIL_SEND_URL, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ raw }),
+    })
+    const data = await res.json().catch(() => ({}))
+    if (!res.ok) {
+      console.error(`Failed to send email to ${to}:`, JSON.stringify(data))
+      throw new Error(data?.error?.message || 'Failed to send email')
+    }
+  } catch (err) {
+    console.error(`Failed to send email to ${to}:`, err.message)
+    throw err
+  }
+}
 
 function signToken(userId) {
   return jwt.sign({ id: userId }, process.env.JWT_SECRET, { expiresIn: '90d' })
@@ -28,10 +85,6 @@ function generateOtp() {
 }
 
 // ── OTP email ──────────────────────────────────────────────────────────────
-// `to: email` is already dynamic here — this function has always sent to
-// whatever address is passed in. If real-world delivery only reaches your
-// own inbox, the cause is almost certainly NOT this code — see the note in
-// chat about App Passwords / spam folders / Render logs.
 async function sendOtpEmail(email, name, otp, purpose) {
   const isLogin  = purpose === 'login'
   const subject  = isLogin ? 'Your CrickyWorld sign-in code' : 'Verify your CrickyWorld account'
@@ -40,61 +93,48 @@ async function sendOtpEmail(email, name, otp, purpose) {
     ? 'Use this code to finish signing in to CrickyWorld.'
     : 'Thanks for joining CrickyWorld! Use this code to verify your email and activate your account.'
 
-  try {
-    await transporter.sendMail({
-      from: `"CrickyWorld 🏏" <${process.env.GMAIL_USER}>`,
-      to: email,
-      subject,
-      html: `
-        <div style="font-family:sans-serif;max-width:480px;margin:auto;background:#0a0a0a;color:#f0f0f0;border-radius:16px;overflow:hidden">
-          <div style="background:#cc0000;padding:24px;text-align:center">
-            <h1 style="margin:0;font-size:28px">🏏 CrickyWorld</h1>
-            <p style="margin:4px 0 0;opacity:0.8;font-size:13px">SCORE · TRACK · WIN</p>
-          </div>
-          <div style="padding:32px">
-            <h2 style="color:#ff4444;margin-top:0">${heading}</h2>
-            <p style="color:#aaa;line-height:1.6">${intro}</p>
-            <div style="text-align:center;margin:32px 0">
-              <div style="display:inline-block;background:#161616;border:1.5px solid rgba(255,255,255,0.1);border-radius:14px;padding:20px 36px">
-                <span style="font-size:36px;font-weight:800;letter-spacing:10px;color:#fff">${otp}</span>
-              </div>
-            </div>
-            <p style="color:#555;font-size:12px;text-align:center">This code expires in 10 minutes. Never share it with anyone.</p>
+  const html = `
+    <div style="font-family:sans-serif;max-width:480px;margin:auto;background:#0a0a0a;color:#f0f0f0;border-radius:16px;overflow:hidden">
+      <div style="background:#cc0000;padding:24px;text-align:center">
+        <h1 style="margin:0;font-size:28px">🏏 CrickyWorld</h1>
+        <p style="margin:4px 0 0;opacity:0.8;font-size:13px">SCORE · TRACK · WIN</p>
+      </div>
+      <div style="padding:32px">
+        <h2 style="color:#ff4444;margin-top:0">${heading}</h2>
+        <p style="color:#aaa;line-height:1.6">${intro}</p>
+        <div style="text-align:center;margin:32px 0">
+          <div style="display:inline-block;background:#161616;border:1.5px solid rgba(255,255,255,0.1);border-radius:14px;padding:20px 36px">
+            <span style="font-size:36px;font-weight:800;letter-spacing:10px;color:#fff">${otp}</span>
           </div>
         </div>
-      `,
-    })
-  } catch (err) {
-    console.error(`Failed to send OTP email to ${email}:`, err.message)
-    throw err
-  }
+        <p style="color:#555;font-size:12px;text-align:center">This code expires in 10 minutes. Never share it with anyone.</p>
+      </div>
+    </div>
+  `
+  await sendMail(email, subject, html)
 }
 
 async function sendResetEmail(email, name, token) {
   const resetUrl = `${process.env.SERVER_URL}/api/auth/reset-password/${token}`
-  await transporter.sendMail({
-    from: `"CrickyWorld 🏏" <${process.env.GMAIL_USER}>`,
-    to: email,
-    subject: 'Reset your CrickyWorld password',
-    html: `
-      <div style="font-family:sans-serif;max-width:480px;margin:auto;background:#0a0a0a;color:#f0f0f0;border-radius:16px;overflow:hidden">
-        <div style="background:#cc0000;padding:24px;text-align:center">
-          <h1 style="margin:0;font-size:28px">🏏 CrickyWorld</h1>
-          <p style="margin:4px 0 0;opacity:0.8;font-size:13px">SCORE · TRACK · WIN</p>
-        </div>
-        <div style="padding:32px">
-          <h2 style="color:#ff4444;margin-top:0">Hey ${name}! 👋</h2>
-          <p style="color:#aaa;line-height:1.6">We received a request to reset your CrickyWorld password. Click below to set a new password.</p>
-          <div style="text-align:center;margin:32px 0">
-            <a href="${resetUrl}" style="background:#cc0000;color:#fff;padding:14px 32px;border-radius:10px;text-decoration:none;font-weight:700;font-size:15px">
-              🔐 Reset My Password
-            </a>
-          </div>
-          <p style="color:#555;font-size:12px;text-align:center">This link expires in 1 hour. If you didn't request this, ignore this email.</p>
-        </div>
+  const html = `
+    <div style="font-family:sans-serif;max-width:480px;margin:auto;background:#0a0a0a;color:#f0f0f0;border-radius:16px;overflow:hidden">
+      <div style="background:#cc0000;padding:24px;text-align:center">
+        <h1 style="margin:0;font-size:28px">🏏 CrickyWorld</h1>
+        <p style="margin:4px 0 0;opacity:0.8;font-size:13px">SCORE · TRACK · WIN</p>
       </div>
-    `
-  })
+      <div style="padding:32px">
+        <h2 style="color:#ff4444;margin-top:0">Hey ${name}! 👋</h2>
+        <p style="color:#aaa;line-height:1.6">We received a request to reset your CrickyWorld password. Click below to set a new password.</p>
+        <div style="text-align:center;margin:32px 0">
+          <a href="${resetUrl}" style="background:#cc0000;color:#fff;padding:14px 32px;border-radius:10px;text-decoration:none;font-weight:700;font-size:15px">
+            🔐 Reset My Password
+          </a>
+        </div>
+        <p style="color:#555;font-size:12px;text-align:center">This link expires in 1 hour. If you didn't request this, ignore this email.</p>
+      </div>
+    </div>
+  `
+  await sendMail(email, 'Reset your CrickyWorld password', html)
 }
 
 // ── POST /api/auth/register ───────────────────────────────────────────────────
@@ -112,16 +152,15 @@ router.post('/register', async (req, res) => {
     const otp  = generateOtp()
 
     const user = await User.create({
-      name,
-      email: email.toLowerCase(),
-      password: hash,
-      deviceId: deviceId || null,
-      isVerified: false,
-      otpHash: await bcrypt.hash(otp, 10),
-      otpExpiry: new Date(Date.now() + 10 * 60 * 1000),
-      otpPurpose: 'register',
-      otpAttempts: 0,
-    })
+  name,
+  email: email.toLowerCase(),
+  password: hash,
+  ...(deviceId ? { deviceId } : {}), isVerified: false,
+  otpHash: await bcrypt.hash(otp, 10),
+  otpExpiry: new Date(Date.now() + 10 * 60 * 1000),
+  otpPurpose: 'register',
+  otpAttempts: 0,
+})
 
     await sendOtpEmail(user.email, user.name, otp, 'register')
     res.status(201).json({

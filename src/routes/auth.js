@@ -152,16 +152,15 @@ router.post('/register', async (req, res) => {
     const otp  = generateOtp()
 
     const user = await User.create({
-      name,
-      email: email.toLowerCase(),
-      password: hash,
-      deviceId: deviceId || null,
-      isVerified: false,
-      otpHash: await bcrypt.hash(otp, 10),
-      otpExpiry: new Date(Date.now() + 10 * 60 * 1000),
-      otpPurpose: 'register',
-      otpAttempts: 0,
-    })
+  name,
+  email: email.toLowerCase(),
+  password: hash,
+  ...(deviceId ? { deviceId } : {}), isVerified: false,
+  otpHash: await bcrypt.hash(otp, 10),
+  otpExpiry: new Date(Date.now() + 10 * 60 * 1000),
+  otpPurpose: 'register',
+  otpAttempts: 0,
+})
 
     await sendOtpEmail(user.email, user.name, otp, 'register')
     res.status(201).json({
