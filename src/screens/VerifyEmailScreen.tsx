@@ -74,7 +74,7 @@ if (joined.length === CODE_LENGTH) {
     setLoading(true); setMessage(''); setIsError(false)
     try {
       await verifyOtp(email, joined, purpose)
-      navigation.dispatch(CommonActions.reset({ index: 0, routes: [{ name: 'Home' }] }))
+  
     } catch (e: unknown) {
       setMessage((e as Error).message ?? 'Invalid code'); setIsError(true)
       setDigits(Array(CODE_LENGTH).fill(''))
