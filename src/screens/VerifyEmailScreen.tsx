@@ -56,8 +56,10 @@ export default function VerifyEmailScreen() {
     if (i < CODE_LENGTH) focus(i)
     else inputs.current[CODE_LENGTH - 1]?.blur()
 
-    const joined = next.join('')
-    if (joined.length === CODE_LENGTH) handleVerify(joined)
+   const joined = next.join('')
+if (joined.length === CODE_LENGTH) {
+  setTimeout(() => handleVerify(joined), 500) // wait 500ms for login to finish saving OTP
+}
   }
 
   const handleKeyPress = (e: NativeSyntheticEvent<TextInputKeyPressEventData>, index: number) => {
