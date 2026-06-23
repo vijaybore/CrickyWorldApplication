@@ -33,9 +33,14 @@ async function getAccessToken() {
 }
 
 function buildRawEmail({ from, to, subject, html }) {
-  const encodedSubject = `=?utf-8?B?${Buffer.from(subject, 'utf-8').toString('base64')}?=`
+  const encodedSubject  = `=?utf-8?B?${Buffer.from(subject, 'utf-8').toString('base64')}?=`
+  // Header display names with non-ASCII characters (like our 🏏 emoji) must
+  // also be encoded-word encoded, same as the subject — otherwise mail
+  // clients fall back to misinterpreting the raw UTF-8 bytes as Latin-1,
+  // which is what turns 🏏 into garbage like "Ã°ÂŸ".
+  const encodedFromName = `=?utf-8?B?${Buffer.from('CrickyWorld 🏏', 'utf-8').toString('base64')}?=`
   const message = [
-    `From: "CrickyWorld 🏏" <${from}>`,
+    `From: ${encodedFromName} <${from}>`,
     `To: ${to}`,
     'Content-Type: text/html; charset=utf-8',
     'MIME-Version: 1.0',
@@ -152,15 +157,16 @@ router.post('/register', async (req, res) => {
     const otp  = generateOtp()
 
     const user = await User.create({
-  name,
-  email: email.toLowerCase(),
-  password: hash,
-  ...(deviceId ? { deviceId } : {}), isVerified: false,
-  otpHash: await bcrypt.hash(otp, 10),
-  otpExpiry: new Date(Date.now() + 10 * 60 * 1000),
-  otpPurpose: 'register',
-  otpAttempts: 0,
-})
+      name,
+      email: email.toLowerCase(),
+      password: hash,
+      ...(deviceId ? { deviceId } : {}),
+      isVerified: false,
+      otpHash: await bcrypt.hash(otp, 10),
+      otpExpiry: new Date(Date.now() + 10 * 60 * 1000),
+      otpPurpose: 'register',
+      otpAttempts: 0,
+    })
 
     await sendOtpEmail(user.email, user.name, otp, 'register')
     res.status(201).json({
