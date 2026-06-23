@@ -84,19 +84,24 @@ function signToken(userId) {
   return jwt.sign({ id: userId }, process.env.JWT_SECRET, { expiresIn: '90d' })
 }
 
-// 6-digit code, true uniform 000000–999999 (crypto.randomInt, not Math.random)
-function generateOtp() {
-  return crypto.randomInt(0, 1000000).toString().padStart(6, '0')
+// Random URL-safe token for the magic login/verify link — not a 6-digit code,
+// so it's generated with enough entropy to be safe to put straight in a URL.
+function generateLoginToken() {
+  return crypto.randomBytes(32).toString('hex')
 }
 
-// ── OTP email ──────────────────────────────────────────────────────────────
-async function sendOtpEmail(email, name, otp, purpose) {
-  const isLogin  = purpose === 'login'
-  const subject  = isLogin ? 'Your CrickyWorld sign-in code' : 'Verify your CrickyWorld account'
-  const heading  = isLogin ? `Confirm it's you, ${name}! 🔐` : `Hey ${name}! 👋`
-  const intro    = isLogin
-    ? 'Use this code to finish signing in to CrickyWorld.'
-    : 'Thanks for joining CrickyWorld! Use this code to verify your email and activate your account.'
+// ── Verify-link email ───────────────────────────────────────────────────────
+// Shared by both register (account verification) and login (confirm it's you).
+// Clicking the button hits confirmLink below in a browser; the app is polling
+// /login-status/:token in the background and picks up the confirmation.
+async function sendVerifyLinkEmail(email, name, token, purpose) {
+  const isLogin    = purpose === 'login'
+  const subject    = isLogin ? "Confirm it's you on CrickyWorld" : 'Verify your CrickyWorld account'
+  const heading     = isLogin ? `Confirm it's you, ${name}! 🔐` : `Hey ${name}! 👋`
+  const intro       = isLogin
+    ? "Tap the button below on this device to finish signing in to CrickyWorld."
+    : "Thanks for joining CrickyWorld! Tap the button below to verify your email and activate your account."
+  const confirmUrl  = `${process.env.SERVER_URL}/api/auth/confirm-link/${token}`
 
   const html = `
     <div style="font-family:sans-serif;max-width:480px;margin:auto;background:#0a0a0a;color:#f0f0f0;border-radius:16px;overflow:hidden">
@@ -108,11 +113,11 @@ async function sendOtpEmail(email, name, otp, purpose) {
         <h2 style="color:#ff4444;margin-top:0">${heading}</h2>
         <p style="color:#aaa;line-height:1.6">${intro}</p>
         <div style="text-align:center;margin:32px 0">
-          <div style="display:inline-block;background:#161616;border:1.5px solid rgba(255,255,255,0.1);border-radius:14px;padding:20px 36px">
-            <span style="font-size:36px;font-weight:800;letter-spacing:10px;color:#fff">${otp}</span>
-          </div>
+          <a href="${confirmUrl}" style="background:#cc0000;color:#fff;padding:14px 32px;border-radius:10px;text-decoration:none;font-weight:700;font-size:15px;display:inline-block">
+            🔐 Verify it's you
+          </a>
         </div>
-        <p style="color:#555;font-size:12px;text-align:center">This code expires in 10 minutes. Never share it with anyone.</p>
+        <p style="color:#555;font-size:12px;text-align:center">This link expires in 10 minutes. Never share it with anyone.</p>
       </div>
     </div>
   `
@@ -153,8 +158,8 @@ router.post('/register', async (req, res) => {
     if (existing)
       return res.status(409).json({ message: 'An account with this email already exists' })
 
-    const hash = await bcrypt.hash(password, 12)
-    const otp  = generateOtp()
+    const hash  = await bcrypt.hash(password, 12)
+    const token = generateLoginToken()
 
     const user = await User.create({
       name,
@@ -162,18 +167,19 @@ router.post('/register', async (req, res) => {
       password: hash,
       ...(deviceId ? { deviceId } : {}),
       isVerified: false,
-      otpHash: await bcrypt.hash(otp, 10),
-      otpExpiry: new Date(Date.now() + 10 * 60 * 1000),
-      otpPurpose: 'register',
-      otpAttempts: 0,
+      loginToken: token,
+      loginTokenExpiry: new Date(Date.now() + 10 * 60 * 1000),
+      loginTokenPurpose: 'register',
+      loginTokenConfirmed: false,
     })
 
-    await sendOtpEmail(user.email, user.name, otp, 'register')
+    await sendVerifyLinkEmail(user.email, user.name, token, 'register')
     res.status(201).json({
-      message: 'Account created! Enter the code we emailed you to verify.',
-      otpRequired: true,
+      message: 'Account created! Check your email and tap the verify link to activate it.',
+      verifyRequired: true,
       purpose: 'register',
       email: user.email,
+      loginToken: token,
     })
   } catch (err) {
     console.error('Register error:', err)
@@ -182,10 +188,10 @@ router.post('/register', async (req, res) => {
 })
 
 // ── POST /api/auth/login ──────────────────────────────────────────────────────
-// Always issues an OTP instead of a token directly — token is only issued
-// after /verify-otp succeeds. Unverified accounts get a 'register' purpose
-// code (so the same screen can finish account verification); verified
-// accounts get a 'login' purpose code (2FA).
+// Always issues a verify-link instead of a token directly — the real JWT is
+// only handed over once the link has been confirmed (login-status reports it).
+// Unverified accounts get a 'register' purpose link (so the same flow can
+// finish account verification); verified accounts get a 'login' purpose link.
 router.post('/login', async (req, res) => {
   try {
     const { email, password } = req.body
@@ -199,21 +205,22 @@ router.post('/login', async (req, res) => {
     if (!match) return res.status(401).json({ message: 'Incorrect password' })
 
     const purpose = user.isVerified ? 'login' : 'register'
-    const otp = generateOtp()
-    user.otpHash     = await bcrypt.hash(otp, 10)
-    user.otpExpiry   = new Date(Date.now() + 10 * 60 * 1000)
-    user.otpPurpose  = purpose
-    user.otpAttempts = 0
+    const token = generateLoginToken()
+    user.loginToken          = token
+    user.loginTokenExpiry    = new Date(Date.now() + 10 * 60 * 1000)
+    user.loginTokenPurpose   = purpose
+    user.loginTokenConfirmed = false
     await user.save()
 
-    await sendOtpEmail(user.email, user.name, otp, purpose)
+    await sendVerifyLinkEmail(user.email, user.name, token, purpose)
     res.json({
       message: purpose === 'login'
-        ? "We sent a code to your email to confirm it's you."
-        : 'Please verify your email first. We sent you a new code.',
-      otpRequired: true,
+        ? "We sent a link to your email to confirm it's you."
+        : 'Please verify your email first. We sent you a new verify link.',
+      verifyRequired: true,
       purpose,
       email: user.email,
+      loginToken: token,
     })
   } catch (err) {
     console.error('Login error:', err)
@@ -221,55 +228,77 @@ router.post('/login', async (req, res) => {
   }
 })
 
-// ── POST /api/auth/verify-otp ─────────────────────────────────────────────────
-// Shared by both register-verification and login-2FA. Returns a token on success.
-router.post('/verify-otp', async (req, res) => {
+// ── GET /api/auth/login-status/:token ─────────────────────────────────────────
+// Polled by the app while the user is off checking their email. Once the link
+// has been clicked (see confirm-link below), this returns the real JWT and the
+// app completes login/registration and navigates to Home.
+router.get('/login-status/:token', async (req, res) => {
   try {
-    const { email, otp, purpose, deviceId } = req.body
-    if (!email || !otp || !purpose)
-      return res.status(400).json({ message: 'Email, code and purpose are required' })
+    const { deviceId } = req.query
+    const user = await User.findOne({ loginToken: req.params.token }).select('+loginToken')
+    if (!user) return res.status(404).json({ message: 'Invalid or expired link' })
 
-    const user = await User.findOne({ email: email.toLowerCase() }).select('+otpHash')
-    if (!user) return res.status(404).json({ message: 'No account found with this email' })
-
-    if (!user.otpHash || !user.otpExpiry || user.otpPurpose !== purpose) {
-      return res.status(400).json({ message: 'No active code for this request. Please resend.' })
+    if (!user.loginTokenExpiry || user.loginTokenExpiry < new Date()) {
+      return res.status(400).json({ confirmed: false, expired: true, message: 'Link expired. Please try again.' })
     }
 
-    if (user.otpExpiry < new Date()) {
-      user.otpHash = undefined; user.otpExpiry = undefined; user.otpPurpose = undefined; user.otpAttempts = 0
-      await user.save()
-      return res.status(400).json({ message: 'Code expired. Please resend a new one.' })
+    if (!user.loginTokenConfirmed) {
+      return res.json({ confirmed: false })
     }
 
-    if (user.otpAttempts >= 5) {
-      user.otpHash = undefined; user.otpExpiry = undefined; user.otpPurpose = undefined; user.otpAttempts = 0
-      await user.save()
-      return res.status(429).json({ message: 'Too many incorrect attempts. Please resend a new code.' })
-    }
-
-    const match = await bcrypt.compare(String(otp), user.otpHash)
-    if (!match) {
-      user.otpAttempts += 1
-      await user.save()
-      return res.status(400).json({ message: `Incorrect code. ${5 - user.otpAttempts} attempt(s) left.` })
-    }
-
+    const purpose = user.loginTokenPurpose
     if (purpose === 'register') user.isVerified = true
-    user.otpHash = undefined; user.otpExpiry = undefined; user.otpPurpose = undefined; user.otpAttempts = 0
-    if (deviceId) user.deviceId = deviceId
+    if (deviceId) user.deviceId = String(deviceId)
+    user.loginToken          = undefined
+    user.loginTokenExpiry    = undefined
+    user.loginTokenPurpose   = undefined
+    user.loginTokenConfirmed = false
     await user.save()
 
-    const token = signToken(user._id)
-    res.json({ token, user: { _id: user._id, name: user.name, email: user.email } })
+    const jwtToken = signToken(user._id)
+    res.json({
+      confirmed: true,
+      token: jwtToken,
+      user: { _id: user._id, name: user.name, email: user.email },
+    })
   } catch (err) {
-    console.error('Verify OTP error:', err)
+    console.error('Login status error:', err)
     res.status(500).json({ message: 'Server error' })
   }
 })
 
-// ── POST /api/auth/resend-otp ─────────────────────────────────────────────────
-router.post('/resend-otp', async (req, res) => {
+// ── GET /api/auth/confirm-link/:token ─────────────────────────────────────────
+// Opened by tapping the button in the email — runs in the phone's browser, not
+// in the app. Just flips loginTokenConfirmed to true; the app's poll picks it
+// up from login-status and finishes the actual login.
+router.get('/confirm-link/:token', async (req, res) => {
+  try {
+    const user = await User.findOne({ loginToken: req.params.token }).select('+loginToken')
+    const fail = (text) => res.status(400).send(`
+      <html><body style="font-family:sans-serif;text-align:center;padding:40px;background:#0a0a0a;color:#f0f0f0">
+        <h1>❌ ${text}</h1><p>Please go back to the app and try again.</p>
+      </body></html>`)
+
+    if (!user) return fail('Invalid or expired link')
+    if (!user.loginTokenExpiry || user.loginTokenExpiry < new Date()) return fail('Link expired')
+
+    user.loginTokenConfirmed = true
+    await user.save()
+
+    res.send(`
+      <html><body style="font-family:sans-serif;text-align:center;padding:40px;background:#0a0a0a;color:#f0f0f0">
+        <div style="font-size:56px;margin-bottom:16px">✅</div>
+        <h1 style="color:#ff4444">You're verified!</h1>
+        <p style="color:#aaa">Go back to the CrickyWorld app — it'll log you in automatically.</p>
+      </body></html>`)
+  } catch (err) {
+    console.error('Confirm link error:', err)
+    res.status(500).send('Server error')
+  }
+})
+
+// ── POST /api/auth/resend-link ────────────────────────────────────────────────
+router.post('/resend-link', async (req, res) => {
   try {
     const { email, purpose } = req.body
     if (!email || !purpose) return res.status(400).json({ message: 'Email and purpose are required' })
@@ -279,17 +308,17 @@ router.post('/resend-otp', async (req, res) => {
     if (purpose === 'register' && user.isVerified)
       return res.status(400).json({ message: 'Email already verified' })
 
-    const otp = generateOtp()
-    user.otpHash     = await bcrypt.hash(otp, 10)
-    user.otpExpiry   = new Date(Date.now() + 10 * 60 * 1000)
-    user.otpPurpose  = purpose
-    user.otpAttempts = 0
+    const token = generateLoginToken()
+    user.loginToken          = token
+    user.loginTokenExpiry    = new Date(Date.now() + 10 * 60 * 1000)
+    user.loginTokenPurpose   = purpose
+    user.loginTokenConfirmed = false
     await user.save()
 
-    await sendOtpEmail(user.email, user.name, otp, purpose)
-    res.json({ message: 'A new code has been sent to your email.' })
+    await sendVerifyLinkEmail(user.email, user.name, token, purpose)
+    res.json({ message: 'A new link has been sent to your email.', loginToken: token })
   } catch (err) {
-    console.error('Resend OTP error:', err)
+    console.error('Resend link error:', err)
     res.status(500).json({ message: 'Server error' })
   }
 })
