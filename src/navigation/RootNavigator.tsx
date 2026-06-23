@@ -11,7 +11,7 @@ import { useAuth }                    from '../context/AuthContext'
 import HomeScreen          from '../screens/HomeScreen'
 import LoginScreen         from '../screens/Loginscreen'
 import RegisterScreen      from '../screens/Registerscreen'
-import VerifyEmailScreen from '../screens/VerifyEmailScreen'
+import WaitingForVerificationScreen from '../screens/WaitingForVerificationScreen'
 import ForgotPasswordScreen from '../screens/ForgotPasswordScreen'
 import NewMatchScreen      from '../screens/NewMatchScreen'
 import OpenMatchScreen     from '../screens/OpenMatchScreen'
@@ -71,7 +71,7 @@ function AuthStack() {
       <Stack.Screen name="Login"    component={LoginScreen} />
       <Stack.Screen name="Register" component={RegisterScreen} />
       <Stack.Screen name="ForgotPassword" component={ForgotPasswordScreen} />
-      <Stack.Screen name="VerifyEmail" component={VerifyEmailScreen} />
+      <Stack.Screen name="WaitingForVerification" component={WaitingForVerificationScreen} />
     </Stack.Navigator>
   )
 }
@@ -89,7 +89,7 @@ function AppStack() {
       <Stack.Screen name="Home"          component={BottomTabs} />
       <Stack.Screen name="NewMatch"      component={NewMatchScreen} />
       <Stack.Screen name="OpenMatch"     component={OpenMatchScreen} />
-      <Stack.Screen name="VerifyEmail" component={VerifyEmailScreen} />
+      <Stack.Screen name="WaitingForVerification" component={WaitingForVerificationScreen} />
       <Stack.Screen name="Scoring"       component={ScoringScreen}
         options={{ animation: 'slide_from_right' }} />
       <Stack.Screen name="MatchDetails"  component={MatchDetailsScreen}

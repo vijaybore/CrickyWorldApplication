@@ -1,4 +1,3 @@
-// crickyworld-server/models/User.js
 const mongoose = require('mongoose')
 
 const userSchema = new mongoose.Schema({
@@ -8,12 +7,14 @@ const userSchema = new mongoose.Schema({
   deviceId:          { type: String, unique: true, sparse: true },
   isVerified:        { type: Boolean, default: false },
 
-  // OTP fields — shared by both the registration-verify flow and the login-2FA flow.
-  // otpPurpose tells verify-otp which flow this code belongs to.
-  otpHash:           { type: String, select: false },
-  otpExpiry:         { type: Date },
-  otpPurpose:        { type: String, enum: ['register', 'login'] },
-  otpAttempts:       { type: Number, default: 0 },
+  // Magic-link verification — shared by both the registration-verify flow and
+  // the login-confirm flow. loginTokenPurpose tells the confirm/status routes
+  // which flow this token belongs to. The app polls login-status/:token until
+  // confirmed flips to true, then receives the real JWT.
+  loginToken:         { type: String, select: false },
+  loginTokenExpiry:   { type: Date },
+  loginTokenPurpose:  { type: String, enum: ['register', 'login'] },
+  loginTokenConfirmed: { type: Boolean, default: false },
 
   // Forgot-password is untouched — still link-based via email.
   resetToken:        { type: String },

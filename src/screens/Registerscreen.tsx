@@ -6,13 +6,14 @@ import {
 } from 'react-native'
 import { useNavigation } from '@react-navigation/native'
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack'
-import { apiUrl } from '../services/api'
+import { useAuth } from '../context/AuthContext'
 import type { RootStackParamList } from '../types'
 
 type Nav = NativeStackNavigationProp<RootStackParamList>
 
 export default function RegisterScreen() {
   const navigation = useNavigation<Nav>()
+  const { register } = useAuth()
 
   const [name,     setName]     = useState('')
   const [email,    setEmail]    = useState('')
@@ -25,7 +26,8 @@ export default function RegisterScreen() {
 
   // See LoginScreen — same fix: onSubmitEditing on the confirm-password field
   // and the button's onPress can both fire handleRegister before `disabled`
-  // re-renders, sending two /register calls that each mint a different OTP.
+  // re-renders, sending two /register calls that would each mint a different
+  // verify-link token.
   const submittingRef = useRef(false)
 
   const handleRegister = async () => {
@@ -40,16 +42,10 @@ export default function RegisterScreen() {
     submittingRef.current = true
     setLoading(true)
     try {
-      const res  = await fetch(apiUrl('/api/auth/register'), {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ name: name.trim(), email: email.trim().toLowerCase(), password }),
-      })
-      const data = await res.json() as { message?: string; otpRequired?: boolean; email?: string }
-      if (!res.ok) { setError(data.message ?? 'Registration failed'); return }
+      const { purpose, email: confirmedEmail, loginToken } = await register(name.trim(), email.trim().toLowerCase(), password)
 
-      // Navigate to OTP screen — account is created but unverified until the code is confirmed
-      navigation.navigate('VerifyEmail', { email: data.email ?? email.trim().toLowerCase(), purpose: 'register' })
+      // Account is created but unverified until the link is tapped
+      navigation.navigate('WaitingForVerification', { email: confirmedEmail, purpose, loginToken })
     } catch (e: unknown) {
       setError((e as Error).message ?? 'Registration failed. Please try again.')
     } finally {

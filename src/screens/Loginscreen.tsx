@@ -38,13 +38,19 @@ export default function LoginScreen() {
     submittingRef.current = true
     setLoading(true)
     try {
-      // Password is correct — server has emailed an OTP. Navigate to enter it.
-      const { purpose, email: confirmedEmail } = await loginWithEmail(email.trim().toLowerCase(), password)
+      // Password is correct — server has emailed a verify-link. Wait for it.
+      const { purpose, email: confirmedEmail, loginToken } = await loginWithEmail(email.trim().toLowerCase(), password)
+      if (!loginToken) {
+        // Defensive fallback: loginWithEmail already completed auth directly
+        // (no verify-link was needed), so just go straight to Home.
+        navigation.dispatch(CommonActions.reset({ index: 0, routes: [{ name: 'Home' }] }))
+        return
+      }
       navigation.reset({
         index: 1,
         routes: [
           { name: 'Login' },
-          { name: 'VerifyEmail', params: { email: confirmedEmail, purpose } },
+          { name: 'WaitingForVerification', params: { email: confirmedEmail, purpose, loginToken } },
         ],
       })
     } catch (e: unknown) {
