@@ -1,15 +1,12 @@
-// crickyworld-server/routes/auth.js
+// routes/auth.js
 const express = require('express')
 const router  = express.Router()
 const jwt     = require('jsonwebtoken')
 const bcrypt  = require('bcryptjs')
 const crypto  = require('crypto')
-const User    = require('../models/User')
+const User    = require('./models/User')
 
 // ── Gmail REST API (OAuth2) ───────────────────────────────────────────────
-// Sends over HTTPS via Gmail's own API instead of SMTP, so it isn't affected
-// by Render free tier's block on outbound ports 25/465/587. Still sends from
-// your own Gmail account — just authenticated with OAuth2 instead of SMTP.
 const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token'
 const GMAIL_SEND_URL   = 'https://gmail.googleapis.com/gmail/v1/users/me/messages/send'
 
@@ -33,9 +30,10 @@ async function getAccessToken() {
 }
 
 function buildRawEmail({ from, to, subject, html }) {
-  const encodedSubject = `=?utf-8?B?${Buffer.from(subject, 'utf-8').toString('base64')}?=`
+  const encodedSubject  = `=?utf-8?B?${Buffer.from(subject, 'utf-8').toString('base64')}?=`
+  const encodedFromName = `=?utf-8?B?${Buffer.from('CrickyWorld 🏏', 'utf-8').toString('base64')}?=`
   const message = [
-    `From: "CrickyWorld 🏏" <${from}>`,
+    `From: ${encodedFromName} <${from}>`,
     `To: ${to}`,
     'Content-Type: text/html; charset=utf-8',
     'MIME-Version: 1.0',
@@ -79,7 +77,6 @@ function signToken(userId) {
   return jwt.sign({ id: userId }, process.env.JWT_SECRET, { expiresIn: '90d' })
 }
 
-// 6-digit code, true uniform 000000–999999 (crypto.randomInt, not Math.random)
 function generateOtp() {
   return crypto.randomInt(0, 1000000).toString().padStart(6, '0')
 }
@@ -152,15 +149,16 @@ router.post('/register', async (req, res) => {
     const otp  = generateOtp()
 
     const user = await User.create({
-  name,
-  email: email.toLowerCase(),
-  password: hash,
-  ...(deviceId ? { deviceId } : {}), isVerified: false,
-  otpHash: await bcrypt.hash(otp, 10),
-  otpExpiry: new Date(Date.now() + 10 * 60 * 1000),
-  otpPurpose: 'register',
-  otpAttempts: 0,
-})
+      name,
+      email: email.toLowerCase(),
+      password: hash,
+      ...(deviceId ? { deviceId } : {}),
+      isVerified: false,
+      otpHash: await bcrypt.hash(otp, 10),
+      otpExpiry: new Date(Date.now() + 10 * 60 * 1000),
+      otpPurpose: 'register',
+      otpAttempts: 0,
+    })
 
     await sendOtpEmail(user.email, user.name, otp, 'register')
     res.status(201).json({
@@ -176,10 +174,6 @@ router.post('/register', async (req, res) => {
 })
 
 // ── POST /api/auth/login ──────────────────────────────────────────────────────
-// Always issues an OTP instead of a token directly — token is only issued
-// after /verify-otp succeeds. Unverified accounts get a 'register' purpose
-// code (so the same screen can finish account verification); verified
-// accounts get a 'login' purpose code (2FA).
 router.post('/login', async (req, res) => {
   try {
     const { email, password } = req.body
@@ -216,15 +210,29 @@ router.post('/login', async (req, res) => {
 })
 
 // ── POST /api/auth/verify-otp ─────────────────────────────────────────────────
-// Shared by both register-verification and login-2FA. Returns a token on success.
 router.post('/verify-otp', async (req, res) => {
   try {
     const { email, otp, purpose, deviceId } = req.body
     if (!email || !otp || !purpose)
       return res.status(400).json({ message: 'Email, code and purpose are required' })
 
-    const user = await User.findOne({ email: email.toLowerCase() }).select('+otpHash')
+    // ✅ FIX: select ALL needed fields explicitly (otpHash has select:false,
+    // and using .select() without listing others excludes them too)
+    const user = await User.findOne({ email: email.toLowerCase() })
+      .select('+otpHash +password')
+
     if (!user) return res.status(404).json({ message: 'No account found with this email' })
+
+    // DEBUG: log what we got from DB
+    console.log('DEBUG verify-otp:', {
+      email: email.toLowerCase(),
+      purposeReceived: purpose,
+      hasOtpHash:    !!user.otpHash,
+      hasOtpExpiry:  !!user.otpExpiry,
+      otpPurpose:    user.otpPurpose,
+      otpExpiry:     user.otpExpiry,
+      now:           new Date(),
+    })
 
     if (!user.otpHash || !user.otpExpiry || user.otpPurpose !== purpose) {
       return res.status(400).json({ message: 'No active code for this request. Please resend.' })
@@ -289,7 +297,6 @@ router.post('/resend-otp', async (req, res) => {
 })
 
 // ── POST /api/auth/forgot-password ────────────────────────────────────────────
-// Unchanged — still a link-based flow, separate from OTP login/verify.
 router.post('/forgot-password', async (req, res) => {
   try {
     const { email } = req.body
@@ -407,9 +414,6 @@ router.post('/reset-password/:token', async (req, res) => {
 })
 
 // ── POST /api/auth/device-login ───────────────────────────────────────────────
-// Unchanged — this is the silent re-login used on app launch for a device
-// that already has a verified session. It intentionally does NOT trigger OTP,
-// otherwise the app would demand a code every time it's opened.
 router.post('/device-login', async (req, res) => {
   try {
     const { deviceId } = req.body
