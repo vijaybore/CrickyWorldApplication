@@ -4,7 +4,7 @@ const router  = express.Router()
 const jwt     = require('jsonwebtoken')
 const bcrypt  = require('bcryptjs')
 const crypto  = require('crypto')
-const User    = require('./models/User')
+const User = require('../models/User') 
 
 // ── Gmail REST API (OAuth2) ───────────────────────────────────────────────
 const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token'
@@ -194,15 +194,12 @@ router.post('/login', async (req, res) => {
     user.otpAttempts = 0
     await user.save()
 
-    await sendOtpEmail(user.email, user.name, otp, purpose)
-    res.json({
-      message: purpose === 'login'
-        ? "We sent a code to your email to confirm it's you."
-        : 'Please verify your email first. We sent you a new code.',
-      otpRequired: true,
-      purpose,
-      email: user.email,
-    })
+    if (purpose === 'register') user.isVerified = true
+user.otpHash = undefined; user.otpExpiry = undefined
+user.otpPurpose = undefined; user.otpAttempts = 0
+await user.save()
+const token = signToken(user._id)
+res.json({ token, user: { _id: user._id, name: user.name, email: user.email } })
   } catch (err) {
     console.error('Login error:', err)
     res.status(500).json({ message: 'Server error' })
