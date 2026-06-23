@@ -230,11 +230,22 @@ router.post('/verify-otp', async (req, res) => {
       return res.status(400).json({ message: 'Email, code and purpose are required' })
 
     const user = await User.findOne({ email: email.toLowerCase() }).select('+otpHash')
-    if (!user) return res.status(404).json({ message: 'No account found with this email' })
+if (!user) return res.status(404).json({ message: 'No account found with this email' })
 
-    if (!user.otpHash || !user.otpExpiry || user.otpPurpose !== purpose) {
-      return res.status(400).json({ message: 'No active code for this request. Please resend.' })
-    }
+// TEMP DEBUG LOG
+console.log('DEBUG verify-otp:', {
+  email: email.toLowerCase(),
+  purpose,
+  hasOtpHash: !!user.otpHash,
+  hasOtpExpiry: !!user.otpExpiry,
+  otpPurpose: user.otpPurpose,
+  otpExpiry: user.otpExpiry,
+  now: new Date(),
+})
+
+if (!user.otpHash || !user.otpExpiry || user.otpPurpose !== purpose) {
+  return res.status(400).json({ message: 'No active code for this request. Please resend.' })
+}
 
     if (user.otpExpiry < new Date()) {
       user.otpHash = undefined; user.otpExpiry = undefined; user.otpPurpose = undefined; user.otpAttempts = 0
