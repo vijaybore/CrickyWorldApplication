@@ -30,7 +30,13 @@ export default function LoginScreen() {
     try {
       // Password is correct — server has emailed an OTP. Navigate to enter it.
       const { purpose, email: confirmedEmail } = await loginWithEmail(email.trim().toLowerCase(), password)
-      navigation.navigate('VerifyEmail', { email: confirmedEmail, purpose })
+      navigation.reset({
+  index: 1,
+  routes: [
+    { name: 'Login' },
+    { name: 'VerifyEmail', params: { email: confirmedEmail, purpose } },
+  ],
+})
     } catch (e: unknown) {
       setError((e as Error).message ?? 'Login failed. Please try again.')
     } finally { setLoading(false) }
