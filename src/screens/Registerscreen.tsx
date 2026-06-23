@@ -1,5 +1,5 @@
 // src/screens/Registerscreen.tsx
-import React, { useState } from 'react'
+import React, { useState, useRef } from 'react'
 import {
   View, Text, TextInput, Pressable, ScrollView,
   StyleSheet, ActivityIndicator, KeyboardAvoidingView, Platform, StatusBar,
@@ -23,7 +23,13 @@ export default function RegisterScreen() {
   const [loading,  setLoading]  = useState(false)
   const [error,    setError]    = useState('')
 
+  // See LoginScreen — same fix: onSubmitEditing on the confirm-password field
+  // and the button's onPress can both fire handleRegister before `disabled`
+  // re-renders, sending two /register calls that each mint a different OTP.
+  const submittingRef = useRef(false)
+
   const handleRegister = async () => {
+    if (submittingRef.current) return
     setError('')
     if (!name.trim())    { setError('Please enter your name'); return }
     if (!email.trim())   { setError('Please enter your email'); return }
@@ -31,6 +37,7 @@ export default function RegisterScreen() {
     if (password.length < 6) { setError('Password must be at least 6 characters'); return }
     if (password !== confirm)  { setError('Passwords do not match'); return }
 
+    submittingRef.current = true
     setLoading(true)
     try {
       const res  = await fetch(apiUrl('/api/auth/register'), {
@@ -47,6 +54,7 @@ export default function RegisterScreen() {
       setError((e as Error).message ?? 'Registration failed. Please try again.')
     } finally {
       setLoading(false)
+      submittingRef.current = false
     }
   }
 

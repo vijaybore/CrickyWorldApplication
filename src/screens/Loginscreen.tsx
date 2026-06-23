@@ -1,5 +1,5 @@
 // src/screens/Loginscreen.tsx
-import React, { useState } from 'react'
+import React, { useState, useRef } from 'react'
 import {
   View, Text, TextInput, Pressable, ScrollView,
   StyleSheet, ActivityIndicator, KeyboardAvoidingView, Platform, StatusBar,
@@ -21,25 +21,38 @@ export default function LoginScreen() {
   const [loading,  setLoading]  = useState(false)
   const [error,    setError]    = useState('')
 
+  // Synchronous guard against double-submits (e.g. tapping "Sign In" right after
+  // pressing Enter/Done on the password field). `loading` state alone isn't
+  // enough here — both events can fire in the same tick before the re-render
+  // that sets disabled={true} actually happens, so two /login calls go out and
+  // each one mints its own OTP, overwriting the other. That's what was causing
+  // "No active code for this request" on the OTP screen.
+  const submittingRef = useRef(false)
+
   const handleLogin = async () => {
+    if (submittingRef.current) return
     setError('')
     if (!email.trim())    { setError('Please enter your email'); return }
     if (!password.trim()) { setError('Please enter your password'); return }
     if (!/\S+@\S+\.\S+/.test(email)) { setError('Enter a valid email address'); return }
+    submittingRef.current = true
     setLoading(true)
     try {
       // Password is correct — server has emailed an OTP. Navigate to enter it.
       const { purpose, email: confirmedEmail } = await loginWithEmail(email.trim().toLowerCase(), password)
       navigation.reset({
-  index: 1,
-  routes: [
-    { name: 'Login' },
-    { name: 'VerifyEmail', params: { email: confirmedEmail, purpose } },
-  ],
-})
+        index: 1,
+        routes: [
+          { name: 'Login' },
+          { name: 'VerifyEmail', params: { email: confirmedEmail, purpose } },
+        ],
+      })
     } catch (e: unknown) {
       setError((e as Error).message ?? 'Login failed. Please try again.')
-    } finally { setLoading(false) }
+    } finally {
+      setLoading(false)
+      submittingRef.current = false
+    }
   }
 
   const handleGuest = () => {

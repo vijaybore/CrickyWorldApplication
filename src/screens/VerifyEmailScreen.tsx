@@ -17,11 +17,6 @@ export default function VerifyEmailScreen() {
   const { verifyOtp, resendOtp } = useAuth()
 
   const isLogin = purpose === 'login'
-  useEffect(() => {
-  setMessage('')
-  setIsError(false)
-  setDigits(Array(CODE_LENGTH).fill(''))
-}, [])
 
   const [digits,  setDigits]  = useState<string[]>(Array(CODE_LENGTH).fill(''))
   const [loading, setLoading] = useState(false)
@@ -73,9 +68,18 @@ if (joined.length === CODE_LENGTH) {
     }
   }
 
+  // Guards against handleVerify firing twice — once from the auto-submit when
+  // the 6th digit is typed, and once more from a manual tap on "Verify →"
+  // landing in the same tick. Two concurrent /verify-otp calls against the
+  // same OTP can otherwise race: whichever one clears otpHash first makes the
+  // other fail with "No active code for this request."
+  const verifyingRef = useRef(false)
+
   const handleVerify = async (code?: string) => {
+    if (verifyingRef.current) return
     const joined = code ?? digits.join('')
     if (joined.length !== CODE_LENGTH) { setMessage('Enter the full 6-digit code'); setIsError(true); return }
+    verifyingRef.current = true
     setLoading(true); setMessage(''); setIsError(false)
     try {
       await verifyOtp(email, joined, purpose)
@@ -84,7 +88,10 @@ if (joined.length === CODE_LENGTH) {
       setMessage((e as Error).message ?? 'Invalid code'); setIsError(true)
       setDigits(Array(CODE_LENGTH).fill(''))
       focus(0)
-    } finally { setLoading(false) }
+    } finally {
+      setLoading(false)
+      verifyingRef.current = false
+    }
   }
 
   const handleResend = async () => {
