@@ -4,7 +4,7 @@ const router  = express.Router()
 const jwt     = require('jsonwebtoken')
 const bcrypt  = require('bcryptjs')
 const crypto  = require('crypto')
-const User    = require('./models/User')
+const User = require('../models/User') 
 
 // ── Gmail REST API (OAuth2) ───────────────────────────────────────────────
 const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token'
