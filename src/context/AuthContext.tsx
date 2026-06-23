@@ -98,15 +98,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // Step 1 of login: verifies the password and triggers an OTP email.
   // Does NOT set the user/token — that only happens after verifyOtp succeeds.
   const loginWithEmail = useCallback(async (email: string, password: string): Promise<LoginResult> => {
-    const res = await fetch(apiUrl('/api/auth/login'), {
-      method:  'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify({ email, password }),
-    })
-    const data = await res.json() as { message?: string; otpRequired?: boolean; purpose?: OtpPurpose; email?: string }
-    if (!res.ok) throw new Error(data.message ?? 'Login failed')
-    return { purpose: data.purpose ?? 'login', email: data.email ?? email, message: data.message }
-  }, [])
+  const res = await fetch(apiUrl('/api/auth/login'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, password }),
+  })
+  const data = await res.json() as { token?: string; user?: User; message?: string; purpose?: OtpPurpose; email?: string }
+  if (!res.ok) throw new Error(data.message ?? 'Login failed')
+
+  // If direct token returned (no OTP)
+  if (data.token) {
+    await AsyncStorage.setItem('token', data.token)
+    await AsyncStorage.setItem('user', JSON.stringify(data.user))
+    await AsyncStorage.removeItem('isGuest')
+    setIsGuest(false)
+    setUser(data.user!)
+    return { purpose: 'login', email: data.user!.email ?? email }
+  }
+  return { purpose: data.purpose ?? 'login', email: data.email ?? email }
+}, [])
 
   const register = useCallback(async (name: string, email: string, password: string): Promise<void> => {
     const res = await fetch(apiUrl('/api/auth/register'), {
