@@ -17,6 +17,11 @@ export default function VerifyEmailScreen() {
   const { verifyOtp, resendOtp } = useAuth()
 
   const isLogin = purpose === 'login'
+  useEffect(() => {
+  setMessage('')
+  setIsError(false)
+  setDigits(Array(CODE_LENGTH).fill(''))
+}, [])
 
   const [digits,  setDigits]  = useState<string[]>(Array(CODE_LENGTH).fill(''))
   const [loading, setLoading] = useState(false)
@@ -56,9 +61,9 @@ export default function VerifyEmailScreen() {
     if (i < CODE_LENGTH) focus(i)
     else inputs.current[CODE_LENGTH - 1]?.blur()
 
-   const joined = next.join('')
+ const joined = next.join('')
 if (joined.length === CODE_LENGTH) {
-  setTimeout(() => handleVerify(joined), 500) // wait 500ms for login to finish saving OTP
+  handleVerify(joined)
 }
   }
 
