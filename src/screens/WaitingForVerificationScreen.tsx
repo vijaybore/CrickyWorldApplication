@@ -40,7 +40,7 @@ export default function WaitingForVerificationScreen() {
       try {
         const confirmed = await pollLoginStatus(loginToken, purpose)
         if (confirmed && !cancelled) {
-          navigation.dispatch(CommonActions.reset({ index: 0, routes: [{ name: 'Home' }] }))
+          // RootNavigator handles this automatically 
         }
       } catch (e: unknown) {
         if (!cancelled) {
