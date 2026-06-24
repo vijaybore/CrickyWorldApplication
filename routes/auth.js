@@ -315,12 +315,12 @@ router.get('/login-status/:token', async (req, res) => {
     const user = await User.findOne({ loginToken: req.params.token })
 
     if (!user) {
-      return res.status(404).json({ confirmed: false, message: 'Token not found. Please resend.' })
-    }
+  return res.status(202).json({ confirmed: false, message: 'Waiting for link click' })
+}
 
-    if (!user.loginTokenConfirmed) {
-      return res.status(202).json({ confirmed: false, message: 'Waiting for link click' })
-    }
+if (!user.loginTokenConfirmed) {
+  return res.status(202).json({ confirmed: false, message: 'Waiting for link click' })
+}
 
     // Link was clicked — issue JWT and clear loginToken fields
     await User.updateOne(

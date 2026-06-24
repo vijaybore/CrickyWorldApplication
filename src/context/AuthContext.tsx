@@ -151,9 +151,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       confirmed?: boolean; expired?: boolean; message?: string
       token?: string; user?: User
     }
-    if (!res.ok) throw new Error(data.message ?? 'Link expired or invalid. Please resend.')
-    if (!data.confirmed) return false
-
+   if (res.status === 410) throw new Error('Link expired. Please resend.')
+if (!res.ok || !data.confirmed) return false
     await AsyncStorage.setItem('token', data.token!)
     await AsyncStorage.setItem('user',  JSON.stringify(data.user!))
     await AsyncStorage.removeItem('isGuest')
