@@ -181,7 +181,7 @@ router.get('/magic/:token', async (req, res) => {
     // Mark as verified and clear token
     await User.updateOne(
       { _id: user._id },
-      { $set: { isVerified: true, loginTokenConfirmed: true }, $unset: { loginToken: 1, loginTokenExpiry: 1 } }
+     { $set: { isVerified: true, loginTokenConfirmed: true } }
     )
 
     const token = signToken(user._id)
