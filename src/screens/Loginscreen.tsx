@@ -48,9 +48,15 @@ export default function LoginScreen() {
     }
   }
 
-  const handleGuest = () => {
-    continueAsGuest()
-    // RootNavigator handles navigation automatically when user state changes
+  const handleGuest = async () => {
+    console.log('[LoginScreen] Continue as Guest tapped')
+    try {
+      await continueAsGuest()
+      console.log('[LoginScreen] continueAsGuest resolved')
+    } catch (e: unknown) {
+      console.log('[LoginScreen] continueAsGuest FAILED:', (e as Error).message)
+      setError('Could not continue as guest. Please try again.')
+    }
   }
 
   return (

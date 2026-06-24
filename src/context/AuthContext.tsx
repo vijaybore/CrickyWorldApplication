@@ -15,7 +15,7 @@ interface AuthContextValue {
   loginWithEmail:  (email: string, password: string) => Promise<void>
   register:        (name: string, email: string, password: string) => Promise<void>
   loginWithDevice: () => Promise<boolean>
-  continueAsGuest: () => void
+  continueAsGuest: () => Promise<void>
   logout:          () => Promise<void>
 }
 
@@ -149,10 +149,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const continueAsGuest = useCallback(async () => {
+    console.log('[AuthContext] continueAsGuest: clearing token/user...')
     await AsyncStorage.multiRemove(['token', 'user'])
+    console.log('[AuthContext] continueAsGuest: setting isGuest flag...')
     await AsyncStorage.setItem('isGuest', 'true')
+    console.log('[AuthContext] continueAsGuest: calling setUser/setIsGuest...')
     setIsGuest(true)
     setUser({ id: 'guest', name: 'Guest' })
+    console.log('[AuthContext] continueAsGuest: done')
   }, [])
 
   const logout = useCallback(async (): Promise<void> => {
