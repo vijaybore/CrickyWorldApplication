@@ -170,7 +170,6 @@ router.post('/register', async (req, res) => {
 })
 
 // ── POST /api/auth/login ──────────────────────────────────────────────────────
-// ── POST /api/auth/login ──────────────────────────────────────────────────────
 router.post('/login', async (req, res) => {
   try {
     const { email, password } = req.body
@@ -260,14 +259,27 @@ router.get('/login-status/:token', async (req, res) => {
       return res.json({ confirmed: false })
     }
 
+    // ── Confirmed! Issue a JWT. ────────────────────────────────────────────
+    // IMPORTANT: we deliberately do NOT delete loginToken/loginTokenExpiry/
+    // loginTokenPurpose/loginTokenConfirmed here. Previously this route
+    // cleared them on the first successful poll, which made the token
+    // single-use. Because the app polls every few seconds without perfect
+    // cancellation guarantees (a tick already in-flight when an earlier tick
+    // succeeds, a stale interval, a remount, etc.), a redundant poll that
+    // lands AFTER the first success would find the token already gone and
+    // 410 with "Link expired" — even though the user verified correctly and
+    // is already logged in.
+    //
+    // Instead, the token stays valid and this route just keeps re-issuing a
+    // fresh JWT for as long as loginTokenExpiry allows (10 minutes), making
+    // it safe to call more than once. The token is fully replaced anyway the
+    // next time /login or /register runs, so there's no meaningful downside
+    // to letting it remain valid until its natural expiry.
     const purpose = user.loginTokenPurpose
-    if (purpose === 'register') user.isVerified = true
-    if (deviceId) user.deviceId = String(deviceId)
-    user.loginToken          = undefined
-    user.loginTokenExpiry    = undefined
-    user.loginTokenPurpose   = undefined
-    user.loginTokenConfirmed = false
-    await user.save()
+    let needsSave = false
+    if (purpose === 'register' && !user.isVerified) { user.isVerified = true; needsSave = true }
+    if (deviceId && user.deviceId !== String(deviceId)) { user.deviceId = String(deviceId); needsSave = true }
+    if (needsSave) await user.save()
 
     console.log(`login-status poll: confirmed for ${user.email}, issuing JWT`)
     const jwtToken = signToken(user._id)
