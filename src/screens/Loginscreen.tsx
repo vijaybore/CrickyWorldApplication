@@ -40,12 +40,10 @@ export default function LoginScreen() {
     try {
       // Password is correct — server has emailed a verify-link. Wait for it.
       const { purpose, email: confirmedEmail, loginToken } = await loginWithEmail(email.trim().toLowerCase(), password)
-      if (!loginToken) {
-        // Defensive fallback: loginWithEmail already completed auth directly
-        // (no verify-link was needed), so just go straight to Home.
-        navigation.dispatch(CommonActions.reset({ index: 0, routes: [{ name: 'Home' }] }))
-        return
-      }
+    if (!loginToken) {
+  // Token missing — just stay, RootNavigator will handle it
+  return
+}
       navigation.reset({
         index: 1,
         routes: [
