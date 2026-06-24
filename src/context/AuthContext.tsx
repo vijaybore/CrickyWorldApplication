@@ -67,10 +67,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             body:    JSON.stringify({ deviceId: did }),
           })
           if (res.ok) {
-            const data = await res.json() as { token: string; user: User }
-            await AsyncStorage.setItem('token', data.token)
-            await AsyncStorage.setItem('user',  JSON.stringify(data.user))
-            setUser(data.user); return
+            const data = await res.json() as { token?: string; user?: User }
+            if (data.token && data.user) {
+              await AsyncStorage.setItem('token', data.token)
+              await AsyncStorage.setItem('user',  JSON.stringify(data.user))
+              setUser(data.user); return
+            }
           }
         } catch { }
 
@@ -96,13 +98,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     })
     const data = await res.json() as { token?: string; user?: User; message?: string }
     if (!res.ok) throw new Error(data.message ?? 'Login failed')
+    if (!data.token || !data.user) throw new Error('Server response was missing login data. Please try again.')
 
-    await AsyncStorage.setItem('token', data.token!)
-    await AsyncStorage.setItem('user',  JSON.stringify(data.user!))
+    await AsyncStorage.setItem('token', data.token)
+    await AsyncStorage.setItem('user',  JSON.stringify(data.user))
     await AsyncStorage.removeItem('isGuest')
     setIsGuest(false)
     setDeviceId(did)
-    setUser(data.user!)
+    setUser(data.user)
   }, [])
 
   // Creates the account and logs in directly — no email verify-link step.
@@ -117,13 +120,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     })
     const data = await res.json() as { token?: string; user?: User; message?: string }
     if (!res.ok) throw new Error(data.message ?? 'Registration failed')
+    if (!data.token || !data.user) throw new Error('Server response was missing login data. Please try again.')
 
-    await AsyncStorage.setItem('token', data.token!)
-    await AsyncStorage.setItem('user',  JSON.stringify(data.user!))
+    await AsyncStorage.setItem('token', data.token)
+    await AsyncStorage.setItem('user',  JSON.stringify(data.user))
     await AsyncStorage.removeItem('isGuest')
     setIsGuest(false)
     setDeviceId(did)
-    setUser(data.user!)
+    setUser(data.user)
   }, [])
 
   const loginWithDevice = useCallback(async (): Promise<boolean> => {
@@ -135,7 +139,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         body:    JSON.stringify({ deviceId: did }),
       })
       if (!res.ok) return false
-      const data = await res.json() as { token: string; user: User }
+      const data = await res.json() as { token?: string; user?: User }
+      if (!data.token || !data.user) return false
       await AsyncStorage.setItem('token', data.token)
       await AsyncStorage.setItem('user',  JSON.stringify(data.user))
       setUser(data.user)
