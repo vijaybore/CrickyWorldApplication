@@ -60,11 +60,10 @@ export default function LoginScreen() {
       submittingRef.current = false
     }
   }
-
-  const handleGuest = () => {
-    continueAsGuest()
-    navigation.dispatch(CommonActions.reset({ index: 0, routes: [{ name: 'Home' }] }))
-  }
+const handleGuest = () => {
+  continueAsGuest()
+  // RootNavigator handles navigation automatically when user state changes
+}
 
   return (
     <KeyboardAvoidingView style={S.root} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
