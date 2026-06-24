@@ -1,4 +1,3 @@
-
 // routes/auth.js
 const express = require('express')
 const router  = express.Router()
@@ -78,8 +77,8 @@ router.post('/register', async (req, res) => {
       email:      email.toLowerCase(),
       password:   hash,
       isVerified: false,
-      resetToken: magicToken,
-      resetTokenExpiry: new Date(Date.now() + 15 * 60 * 1000),
+      loginToken: magicToken,
+      loginTokenExpiry: new Date(Date.now() + 15 * 60 * 1000),
       ...(deviceId ? { deviceId } : {}),
     })
 
@@ -128,7 +127,7 @@ router.post('/login', async (req, res) => {
     const magicToken = crypto.randomBytes(32).toString('hex')
     await User.updateOne(
       { _id: user._id },
-      { $set: { resetToken: magicToken, resetTokenExpiry: new Date(Date.now() + 15 * 60 * 1000) } }
+      { $set: { loginToken: magicToken, loginTokenExpiry: new Date(Date.now() + 15 * 60 * 1000) } }
     )
 
     const verifyUrl = `${process.env.SERVER_URL}/api/auth/magic/${magicToken}`
@@ -166,8 +165,8 @@ router.post('/login', async (req, res) => {
 router.get('/magic/:token', async (req, res) => {
   try {
     const user = await User.findOne({
-      resetToken: req.params.token,
-      resetTokenExpiry: { $gt: new Date() },
+      loginToken: req.params.token,
+      loginTokenExpiry: { $gt: new Date() },
     })
 
     if (!user) {
@@ -182,7 +181,7 @@ router.get('/magic/:token', async (req, res) => {
     // Mark as verified and clear token
     await User.updateOne(
       { _id: user._id },
-      { $set: { isVerified: true }, $unset: { resetToken: 1, resetTokenExpiry: 1 } }
+      { $set: { isVerified: true, loginTokenConfirmed: true }, $unset: { loginToken: 1, loginTokenExpiry: 1 } }
     )
 
     const token = signToken(user._id)
@@ -228,7 +227,7 @@ router.post('/check-verified', async (req, res) => {
     const user = await User.findOne({ email: email.toLowerCase() })
     if (!user) return res.status(404).json({ message: 'User not found' })
 
-    if (!user.isVerified) {
+    if (!user.isVerified || !user.loginTokenConfirmed) {
       return res.status(202).json({ verified: false, message: 'Not verified yet' })
     }
 
