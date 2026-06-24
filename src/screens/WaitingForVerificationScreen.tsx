@@ -45,13 +45,27 @@ export default function WaitingForVerificationScreen() {
       try {
         const confirmed = await pollLoginStatus(tokenRef.current, purpose)
         if (confirmed && !cancelled) {
-          // Don't navigate manually here — this screen lives inside AuthStack,
-          // which has no "Home" route, so dispatching a reset to "Home" from
-          // here fails ("action not handled by any navigator"). Instead,
-          // pollLoginStatus already called setUser(...) on success, which
-          // flips RootNavigator's user ? <AppStack/> : <AuthStack/> check.
-          // That swap unmounts AuthStack (this screen included) and mounts
-          // AppStack fresh, landing on Home automatically — no action needed.
+          // This screen is registered in BOTH AuthStack and AppStack (e.g. a
+          // guest can open it via the Sign In modal from inside AppStack).
+          // setUser(...) inside pollLoginStatus flips RootNavigator's
+          // AuthStack/AppStack choice, but if we were already inside AppStack
+          // (as a guest), that top-level swap is a no-op — same component
+          // tree, so nothing pops this screen back to Home on its own.
+          // CommonActions.reset only works within the navigator that owns the
+          // current screen, and "Home" exists in AppStack but not AuthStack —
+          // so reset() can fail depending on which stack we're in. navigate()
+          // is the safe choice here: it works whether we're already inside
+          // AppStack (just switches screens) or the parent swap is about to
+          // remount AppStack fresh anyway (this call becomes a harmless no-op
+          // on an unmounting tree).
+          try {
+            navigation.navigate('Home' as never)
+          } catch {
+            // If "Home" genuinely isn't reachable from here (we're still
+            // inside AuthStack and the parent hasn't swapped yet), that's
+            // fine — RootNavigator's swap to AppStack will land on Home by
+            // itself once the re-render from setUser above takes effect.
+          }
         }
       } catch (e: unknown) {
         if (!cancelled) {
