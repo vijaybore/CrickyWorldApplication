@@ -149,11 +149,12 @@ router.post('/login', async (req, res) => {
     await sendMail(user.email, 'Your CrickyWorld sign-in link', html)
     console.log(`✅ Magic link sent to ${user.email}`)
 
-    res.json({
-      message: "Check your email and tap the sign-in button!",
-      magicLink: true,
-      email: user.email,
-    })
+   res.json({
+  message: "Check your email and tap the sign-in button!",
+  magicLink: true,
+  email: user.email,
+  loginToken: magicToken,  // ← ADD THIS
+})
   } catch (err) {
     console.error('Login error:', err)
     res.status(500).json({ message: 'Server error' })
