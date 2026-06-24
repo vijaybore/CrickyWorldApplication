@@ -66,6 +66,7 @@ function BottomTabs() {
 
 // ── Auth stack (shown when logged OUT) ────────────────────────────────────────
 function AuthStack() {
+  console.log('[RootNavigator] rendering AuthStack')
   return (
     <Stack.Navigator screenOptions={{ headerShown: false, animation: 'slide_from_bottom' }}>
       <Stack.Screen name="Login"    component={LoginScreen} />
@@ -78,6 +79,7 @@ function AuthStack() {
 
 // ── App stack (shown when logged IN) ─────────────────────────────────────────
 function AppStack() {
+  console.log('[RootNavigator] rendering AppStack')
   return (
     <Stack.Navigator
       screenOptions={{
@@ -112,6 +114,8 @@ function AppStack() {
 
 export function RootNavigator() {
   const { user, loading } = useAuth()
+
+  console.log(`[RootNavigator] render: user=${user ? JSON.stringify(user) : 'null'}, loading=${loading}`)
 
   if (loading) {
     return (

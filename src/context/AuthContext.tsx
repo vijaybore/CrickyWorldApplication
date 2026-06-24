@@ -42,6 +42,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [isGuest,  setIsGuest]  = useState(false)
   const [deviceId, setDeviceId] = useState<string | null>(null)
 
+  // Diagnostic: log every render so we can see in Metro's terminal exactly
+  // when `user` changes and whether RootNavigator should be re-rendering.
+  console.log(`[AuthProvider] render: user=${user ? user.email : 'null'}, loading=${loading}`)
+
   useEffect(() => {
    const init = async () => {
       try {
@@ -145,20 +149,28 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // waiting", and it throws if the link expired or the token is invalid so the
   // waiting screen can show an error and offer to resend.
   const pollLoginStatus = useCallback(async (loginToken: string, purpose: VerifyPurpose): Promise<boolean> => {
+    console.log(`[pollLoginStatus] polling token=${loginToken.slice(0, 8)}... purpose=${purpose}`)
     const did = await getDeviceId()
     const res = await fetch(apiUrl(`/api/auth/login-status/${loginToken}?deviceId=${encodeURIComponent(did)}`))
+    console.log(`[pollLoginStatus] response status=${res.status}, ok=${res.ok}`)
     const data = await res.json() as {
       confirmed?: boolean; expired?: boolean; message?: string
       token?: string; user?: User
     }
-   if (res.status === 410) throw new Error('Link expired. Please resend.')
-if (!res.ok || !data.confirmed) return false
+    console.log(`[pollLoginStatus] data=${JSON.stringify(data)}`)
+    if (res.status === 410) throw new Error('Link expired. Please resend.')
+    if (!res.ok || !data.confirmed) {
+      console.log('[pollLoginStatus] not confirmed yet, returning false')
+      return false
+    }
+    console.log('[pollLoginStatus] CONFIRMED! Storing token and user, calling setUser...')
     await AsyncStorage.setItem('token', data.token!)
     await AsyncStorage.setItem('user',  JSON.stringify(data.user!))
     await AsyncStorage.removeItem('isGuest')
     setIsGuest(false)
     setDeviceId(did)
     setUser(data.user!)
+    console.log(`[pollLoginStatus] setUser called with email=${data.user!.email}. Returning true.`)
     return true
   }, [])
 
