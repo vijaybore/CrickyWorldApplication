@@ -5,18 +5,20 @@ const userSchema = new mongoose.Schema({
   email:             { type: String, required: true, unique: true, lowercase: true, trim: true },
   password:          { type: String, required: true, select: false },
   deviceId:          { type: String, unique: true, sparse: true },
-  isVerified:        { type: Boolean, default: false },
+  isVerified:        { type: Boolean, default: true }, // legacy field, always true now — email-link verification was removed
 
-  // Magic-link verification — shared by both the registration-verify flow and
-  // the login-confirm flow. loginTokenPurpose tells the confirm/status routes
-  // which flow this token belongs to. The app polls login-status/:token until
-  // confirmed flips to true, then receives the real JWT.
-  loginToken:         { type: String, select: false },
-  loginTokenExpiry:   { type: Date },
-  loginTokenPurpose:  { type: String, enum: ['register', 'login'] },
+  // ── Legacy magic-link verification fields ──────────────────────────────
+  // No longer written to or read by any route. Left in the schema so any
+  // existing documents that still have these values don't error out, and so
+  // a future Mongoose strict-mode read of an old document doesn't drop data
+  // unexpectedly. Safe to remove entirely in a later cleanup once you're
+  // sure nothing references them.
+  loginToken:          { type: String, select: false },
+  loginTokenExpiry:    { type: Date },
+  loginTokenPurpose:   { type: String, enum: ['register', 'login'] },
   loginTokenConfirmed: { type: Boolean, default: false },
 
-  // Forgot-password is untouched — still link-based via email.
+  // Forgot-password — still active, link-based via email.
   resetToken:        { type: String },
   resetTokenExpiry:  { type: Date },
 }, { timestamps: true })

@@ -4,7 +4,7 @@ import {
   View, Text, TextInput, Pressable, ScrollView,
   StyleSheet, ActivityIndicator, KeyboardAvoidingView, Platform, StatusBar,
 } from 'react-native'
-import { useNavigation, CommonActions } from '@react-navigation/native'
+import { useNavigation } from '@react-navigation/native'
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack'
 import { useAuth } from '../context/AuthContext'
 import type { RootStackParamList } from '../types'
@@ -12,7 +12,7 @@ import type { RootStackParamList } from '../types'
 type Nav = NativeStackNavigationProp<RootStackParamList>
 
 export default function LoginScreen() {
-  const navigation             = useNavigation<Nav>()
+  const navigation = useNavigation<Nav>()
   const { loginWithEmail, continueAsGuest } = useAuth()
 
   const [email,    setEmail]    = useState('')
@@ -24,9 +24,7 @@ export default function LoginScreen() {
   // Synchronous guard against double-submits (e.g. tapping "Sign In" right after
   // pressing Enter/Done on the password field). `loading` state alone isn't
   // enough here — both events can fire in the same tick before the re-render
-  // that sets disabled={true} actually happens, so two /login calls go out and
-  // each one mints its own OTP, overwriting the other. That's what was causing
-  // "No active code for this request" on the OTP screen.
+  // that sets disabled={true} actually happens.
   const submittingRef = useRef(false)
 
   const handleLogin = async () => {
@@ -38,19 +36,10 @@ export default function LoginScreen() {
     submittingRef.current = true
     setLoading(true)
     try {
-      // Password is correct — server has emailed a verify-link. Wait for it.
-      const { purpose, email: confirmedEmail, loginToken } = await loginWithEmail(email.trim().toLowerCase(), password)
-    if (!loginToken) {
-  // Token missing — just stay, RootNavigator will handle it
-  return
-}
-      navigation.reset({
-        index: 1,
-        routes: [
-          { name: 'Login' },
-          { name: 'WaitingForVerification', params: { email: confirmedEmail, purpose, loginToken } },
-        ],
-      })
+      // Logs in directly — no email verify-link step. AuthContext's
+      // loginWithEmail sets the user/token itself; RootNavigator picks up
+      // the change automatically and swaps to AppStack.
+      await loginWithEmail(email.trim().toLowerCase(), password)
     } catch (e: unknown) {
       setError((e as Error).message ?? 'Login failed. Please try again.')
     } finally {
@@ -58,10 +47,11 @@ export default function LoginScreen() {
       submittingRef.current = false
     }
   }
-const handleGuest = () => {
-  continueAsGuest()
-  // RootNavigator handles navigation automatically when user state changes
-}
+
+  const handleGuest = () => {
+    continueAsGuest()
+    // RootNavigator handles navigation automatically when user state changes
+  }
 
   return (
     <KeyboardAvoidingView style={S.root} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
