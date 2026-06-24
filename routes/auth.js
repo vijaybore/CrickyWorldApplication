@@ -307,5 +307,36 @@ router.get('/me', async (req, res) => {
     res.json({ _id: user._id, name: user.name, email: user.email })
   } catch { res.status(401).json({ message: 'Invalid or expired token' }) }
 })
+// ── GET /api/auth/login-status/:token ─────────────────────────────────────────
+router.get('/login-status/:token', async (req, res) => {
+  try {
+    const { deviceId } = req.query
+    const user = await User.findOne({ loginToken: req.params.token })
+
+    if (!user) {
+      return res.status(404).json({ confirmed: false, message: 'Token not found. Please resend.' })
+    }
+
+    if (!user.loginTokenConfirmed) {
+      return res.status(202).json({ confirmed: false, message: 'Waiting for link click' })
+    }
+
+    // Link was clicked — issue JWT and clear loginToken fields
+    await User.updateOne(
+      { _id: user._id },
+      {
+        $unset: { loginToken: 1, loginTokenExpiry: 1, loginTokenConfirmed: 1 },
+        ...(deviceId ? { $set: { deviceId: String(deviceId) } } : {}),
+      }
+    )
+
+    console.log(`✅ Login status confirmed for ${user.email}`)
+    const token = signToken(user._id)
+    res.json({ confirmed: true, token, user: { _id: user._id, name: user.name, email: user.email } })
+  } catch (err) {
+    console.error('Login status error:', err)
+    res.status(500).json({ message: 'Server error' })
+  }
+})
 
 module.exports = router
