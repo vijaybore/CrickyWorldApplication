@@ -73,13 +73,13 @@ function generateLoginToken() {
 }
 
 async function sendVerifyLinkEmail(email, name, token, purpose) {
-  const isLogin    = purpose === 'login'
-  const subject    = isLogin ? "Confirm it's you on CrickyWorld" : 'Verify your CrickyWorld account'
-  const heading     = isLogin ? `Confirm it's you, ${name}!` : `Hey ${name}!`
-  const intro       = isLogin
-    ? "Tap the button below on this device to finish signing in to CrickyWorld."
-    : "Thanks for joining CrickyWorld! Tap the button below to verify your email and activate your account."
-  const confirmUrl  = `${process.env.SERVER_URL}/api/auth/confirm-link/${token}`
+  const isLogin   = purpose === 'login'
+  const subject   = isLogin ? "Confirm it's you on CrickyWorld" : 'Verify your CrickyWorld account'
+  const heading   = isLogin ? `Confirm it's you, ${name}!` : `Hey ${name}!`
+  const intro     = isLogin
+    ? 'Tap the button below on this device to finish signing in to CrickyWorld.'
+    : 'Thanks for joining CrickyWorld! Tap the button below to verify your email and activate your account.'
+  const confirmUrl = `${process.env.SERVER_URL}/api/auth/confirm-link/${token}`
 
   console.log(`Building verify link for ${email}: ${confirmUrl}`)
 
@@ -120,7 +120,7 @@ async function sendResetEmail(email, name, token) {
             Reset My Password
           </a>
         </div>
-        <p style="color:#555;font-size:12px;text-align:center">This link expires in 1 hour. If you didn't request this, ignore this email.</p>
+        <p style="color:#555;font-size:12px;text-align:center">This link expires in 1 hour. If you did not request this, ignore this email.</p>
       </div>
     </div>
   `
@@ -143,13 +143,13 @@ router.post('/register', async (req, res) => {
 
     const user = await User.create({
       name,
-      email: email.toLowerCase(),
-      password: hash,
+      email:               email.toLowerCase(),
+      password:            hash,
       ...(deviceId ? { deviceId } : {}),
-      isVerified: false,
-      loginToken: token,
-      loginTokenExpiry: new Date(Date.now() + 10 * 60 * 1000),
-      loginTokenPurpose: 'register',
+      isVerified:          false,
+      loginToken:          token,
+      loginTokenExpiry:    new Date(Date.now() + 10 * 60 * 1000),
+      loginTokenPurpose:   'register',
       loginTokenConfirmed: false,
     })
 
@@ -157,11 +157,11 @@ router.post('/register', async (req, res) => {
     await sendVerifyLinkEmail(user.email, user.name, token, 'register')
 
     res.status(201).json({
-      message: 'Account created! Check your email and tap the verify link to activate it.',
+      message:        'Account created! Check your email and tap the verify link to activate it.',
       verifyRequired: true,
-      purpose: 'register',
-      email: user.email,
-      loginToken: token,
+      purpose:        'register',
+      email:          user.email,
+      loginToken:     token,
     })
   } catch (err) {
     console.error('Register error:', err)
@@ -176,37 +176,37 @@ router.post('/login', async (req, res) => {
     if (!email || !password)
       return res.status(400).json({ message: 'Email and password are required' })
 
-    const user = await User.findOne({ email: email.toLowerCase() }).select('+password +loginToken +loginTokenExpiry')
+    // FIX 1: select loginToken + loginTokenExpiry so the double-submit guard
+    // can actually read them (both have select:false in the User schema).
+    const user = await User.findOne({ email: email.toLowerCase() })
+      .select('+password +loginToken +loginTokenExpiry')
     if (!user) return res.status(401).json({ message: 'No account found with this email' })
 
     const match = await bcrypt.compare(password, user.password)
     if (!match) return res.status(401).json({ message: 'Incorrect password' })
 
     const purpose = user.isVerified ? 'login' : 'register'
+    const now     = Date.now()
 
-    // ── Double-submit guard ──────────────────────────────────────────────────
-    // If a token was issued less than 30 seconds ago (> 9.5 min left on a
-    // 10-min expiry), reuse it and skip sending another email. This prevents
-    // a second /login call (e.g. user taps Sign In twice, or navigates back
-    // and retries) from overwriting the token the polling screen already holds,
-    // which would cause a permanent 404 on every subsequent poll.
-    const now = Date.now()
+    // FIX 2: If a fresh token already exists (issued < 30s ago, so > 9.5 min
+    // remaining on a 10-min expiry) reuse it instead of overwriting. Without
+    // this, a double-tap or a back-and-retry generates a second token that
+    // overwrites the first, making every subsequent poll return 410.
     const tokenStillFresh =
       user.loginToken &&
       user.loginTokenExpiry &&
-      user.loginTokenExpiry.getTime() > now + 9.5 * 60 * 1000 // issued < 30s ago
+      user.loginTokenExpiry.getTime() > now + 9.5 * 60 * 1000
 
     if (tokenStillFresh) {
-     console.log(`[LOGIN] ${user.email} tokenStillFresh=${tokenStillFresh}, expiry=${user.loginTokenExpiry}, now+9.5min=${new Date(now + 9.5*60*1000)}`)
-     console.log(`[LOGIN] ${user.email} NEW token=${token.slice(0, 8)}... at ${new Date().toISOString()}`)
+      console.log(`[login] reusing fresh token for ${user.email}`)
       return res.json({
-        message: purpose === 'login'
+        message:        purpose === 'login'
           ? "We sent a link to your email to confirm it's you."
           : 'Please verify your email first. We sent you a new verify link.',
         verifyRequired: true,
         purpose,
-        email: user.email,
-        loginToken: user.loginToken,
+        email:          user.email,
+        loginToken:     user.loginToken,
       })
     }
 
@@ -217,18 +217,18 @@ router.post('/login', async (req, res) => {
     user.loginTokenConfirmed = false
     await user.save()
 
-    console.log(`Login attempt for ${user.email}, purpose=${purpose}, token=${token.slice(0, 8)}..., sending email...`)
+    console.log(`[login] new token for ${user.email}, purpose=${purpose}, token=${token.slice(0, 8)}...`)
     await sendVerifyLinkEmail(user.email, user.name, token, purpose)
-    console.log(`Verify-link email sent successfully to ${user.email}`)
+    console.log(`[login] email sent to ${user.email}`)
 
     res.json({
-      message: purpose === 'login'
+      message:        purpose === 'login'
         ? "We sent a link to your email to confirm it's you."
         : 'Please verify your email first. We sent you a new verify link.',
       verifyRequired: true,
       purpose,
-      email: user.email,
-      loginToken: token,
+      email:          user.email,
+      loginToken:     token,
     })
   } catch (err) {
     console.error('Login error:', err)
@@ -236,7 +236,7 @@ router.post('/login', async (req, res) => {
   }
 })
 
-// ── GET /api/auth/login-status/:token ─────────────────────────────────────────
+// ── GET /api/auth/login-status/:token ────────────────────────────────────────
 // Polled by the app every few seconds while the user checks their email.
 router.get('/login-status/:token', async (req, res) => {
   try {
@@ -244,19 +244,18 @@ router.get('/login-status/:token', async (req, res) => {
     const user = await User.findOne({ loginToken: req.params.token })
 
     if (!user) {
-      console.log(`login-status poll: no user found for token ${req.params.token.slice(0, 8)}...`)
-      // Use 410 Gone (not 404) so the client knows this is terminal and throws
-      // an error for the user to see, rather than silently polling forever.
+      console.log(`[login-status] no user for token ${req.params.token.slice(0, 8)}...`)
+      // FIX 3: return 410 (not 404) so the client treats this as terminal
+      // and shows an error instead of polling forever.
       return res.status(410).json({ confirmed: false, message: 'Link expired. Please resend.' })
     }
 
     if (!user.loginTokenExpiry || user.loginTokenExpiry < new Date()) {
-      console.log(`login-status poll: token expired for ${user.email}`)
+      console.log(`[login-status] token expired for ${user.email}`)
       return res.status(410).json({ confirmed: false, expired: true, message: 'Link expired. Please resend.' })
     }
 
     if (!user.loginTokenConfirmed) {
-      // Not clicked yet — normal "keep waiting" response, not an error.
       return res.json({ confirmed: false })
     }
 
@@ -269,12 +268,12 @@ router.get('/login-status/:token', async (req, res) => {
     user.loginTokenConfirmed = false
     await user.save()
 
-    console.log(`login-status poll: confirmed for ${user.email}, issuing JWT`)
+    console.log(`[login-status] confirmed for ${user.email}, issuing JWT`)
     const jwtToken = signToken(user._id)
     res.json({
       confirmed: true,
-      token: jwtToken,
-      user: { _id: user._id, name: user.name, email: user.email },
+      token:     jwtToken,
+      user:      { _id: user._id, name: user.name, email: user.email },
     })
   } catch (err) {
     console.error('Login status error:', err)
@@ -282,7 +281,7 @@ router.get('/login-status/:token', async (req, res) => {
   }
 })
 
-// ── GET /api/auth/confirm-link/:token ─────────────────────────────────────────
+// ── GET /api/auth/confirm-link/:token ────────────────────────────────────────
 // Opened by tapping the button in the email — runs in the phone's browser.
 router.get('/confirm-link/:token', async (req, res) => {
   try {
@@ -293,22 +292,22 @@ router.get('/confirm-link/:token', async (req, res) => {
       </body></html>`)
 
     if (!user) {
-      console.log(`confirm-link: no user found for token ${req.params.token.slice(0, 8)}...`)
+      console.log(`[confirm-link] no user for token ${req.params.token.slice(0, 8)}...`)
       return fail('Invalid or expired link')
     }
     if (!user.loginTokenExpiry || user.loginTokenExpiry < new Date()) {
-      console.log(`confirm-link: token expired for ${user.email}`)
+      console.log(`[confirm-link] token expired for ${user.email}`)
       return fail('Link expired')
     }
 
     user.loginTokenConfirmed = true
     await user.save()
-    console.log(`confirm-link: marked confirmed for ${user.email}`)
+    console.log(`[confirm-link] confirmed for ${user.email}`)
 
     res.send(`
       <html><body style="font-family:sans-serif;text-align:center;padding:40px;background:#0a0a0a;color:#f0f0f0">
         <h1 style="color:#ff4444">You're verified!</h1>
-        <p style="color:#aaa">Go back to the CrickyWorld app — it'll log you in automatically.</p>
+        <p style="color:#aaa">Go back to the CrickyWorld app — it will log you in automatically.</p>
       </body></html>`)
   } catch (err) {
     console.error('Confirm link error:', err)
@@ -320,10 +319,12 @@ router.get('/confirm-link/:token', async (req, res) => {
 router.post('/resend-link', async (req, res) => {
   try {
     const { email, purpose } = req.body
-    if (!email || !purpose) return res.status(400).json({ message: 'Email and purpose are required' })
+    if (!email || !purpose)
+      return res.status(400).json({ message: 'Email and purpose are required' })
 
     const user = await User.findOne({ email: email.toLowerCase() })
-    if (!user) return res.status(404).json({ message: 'No account found with this email' })
+    if (!user)
+      return res.status(404).json({ message: 'No account found with this email' })
     if (purpose === 'register' && user.isVerified)
       return res.status(400).json({ message: 'Email already verified' })
 
@@ -334,7 +335,7 @@ router.post('/resend-link', async (req, res) => {
     user.loginTokenConfirmed = false
     await user.save()
 
-    console.log(`Resending link for ${user.email}, purpose=${purpose}`)
+    console.log(`[resend-link] sending to ${user.email}, purpose=${purpose}`)
     await sendVerifyLinkEmail(user.email, user.name, token, purpose)
     res.json({ message: 'A new link has been sent to your email.', loginToken: token })
   } catch (err) {
@@ -343,7 +344,7 @@ router.post('/resend-link', async (req, res) => {
   }
 })
 
-// ── POST /api/auth/forgot-password ────────────────────────────────────────────
+// ── POST /api/auth/forgot-password ───────────────────────────────────────────
 router.post('/forgot-password', async (req, res) => {
   try {
     const { email } = req.body
@@ -369,7 +370,7 @@ router.post('/forgot-password', async (req, res) => {
 router.get('/reset-password/:token', async (req, res) => {
   try {
     const user = await User.findOne({
-      resetToken: req.params.token,
+      resetToken:       req.params.token,
       resetTokenExpiry: { $gt: new Date() },
     })
     if (!user) return res.status(400).send(`
@@ -413,18 +414,18 @@ router.get('/reset-password/:token', async (req, res) => {
             const p = document.getElementById('password').value
             const c = document.getElementById('confirm').value
             if (p.length < 6) { showMsg('Password must be at least 6 characters', false); return }
-            if (p !== c) { showMsg('Passwords do not match', false); return }
-            const res = await fetch(window.location.href, {
-              method: 'POST', headers: {'Content-Type':'application/json'},
+            if (p !== c)      { showMsg('Passwords do not match', false); return }
+            const res  = await fetch(window.location.href, {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ password: p })
             })
             const data = await res.json()
-            if (res.ok) { showMsg('Password reset! Open CrickyWorld app and sign in.', true) }
-            else { showMsg(data.message || 'Failed to reset password', false) }
+            if (res.ok) showMsg('Password reset! Open CrickyWorld app and sign in.', true)
+            else        showMsg(data.message || 'Failed to reset password', false)
           }
           function showMsg(text, success) {
             const m = document.getElementById('msg')
-            m.className = 'msg ' + (success ? 'success' : 'error')
+            m.className  = 'msg ' + (success ? 'success' : 'error')
             m.textContent = text
           }
         </script>
@@ -443,9 +444,9 @@ router.post('/reset-password/:token', async (req, res) => {
       return res.status(400).json({ message: 'Password must be at least 6 characters' })
 
     const user = await User.findOne({
-      resetToken: req.params.token,
+      resetToken:       req.params.token,
       resetTokenExpiry: { $gt: new Date() },
-    }).select('+password +loginToken +loginTokenExpiry')
+    }).select('+password')
     if (!user) return res.status(400).json({ message: 'Invalid or expired reset link' })
 
     user.password         = await bcrypt.hash(password, 12)
@@ -466,7 +467,7 @@ router.post('/device-login', async (req, res) => {
     const { deviceId } = req.body
     if (!deviceId) return res.status(400).json({ message: 'deviceId required' })
     const user = await User.findOne({ deviceId })
-    if (!user) return res.status(404).json({ message: 'Device not registered' })
+    if (!user)           return res.status(404).json({ message: 'Device not registered' })
     if (!user.isVerified) return res.status(403).json({ message: 'Email not verified' })
     const token = signToken(user._id)
     res.json({ token, user: { _id: user._id, name: user.name, email: user.email } })
@@ -491,3 +492,4 @@ router.get('/me', async (req, res) => {
 })
 
 module.exports = router
+g
