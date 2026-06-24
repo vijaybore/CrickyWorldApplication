@@ -3,7 +3,7 @@ import React, { useState, useRef, useEffect } from 'react'
 import {
   View, Text, Pressable, StyleSheet, ActivityIndicator, StatusBar,
 } from 'react-native'
-import { useNavigation, useRoute, CommonActions } from '@react-navigation/native'
+import { useNavigation, useRoute } from '@react-navigation/native'
 import { useAuth, type VerifyPurpose } from '../context/AuthContext'
 
 const POLL_INTERVAL = 3000 // ms — how often we ask the server "has the link been clicked yet?"
@@ -45,27 +45,19 @@ export default function WaitingForVerificationScreen() {
       try {
         const confirmed = await pollLoginStatus(tokenRef.current, purpose)
         if (confirmed && !cancelled) {
-          // This screen is registered in BOTH AuthStack and AppStack (e.g. a
-          // guest can open it via the Sign In modal from inside AppStack).
-          // setUser(...) inside pollLoginStatus flips RootNavigator's
-          // AuthStack/AppStack choice, but if we were already inside AppStack
-          // (as a guest), that top-level swap is a no-op — same component
-          // tree, so nothing pops this screen back to Home on its own.
-          // CommonActions.reset only works within the navigator that owns the
-          // current screen, and "Home" exists in AppStack but not AuthStack —
-          // so reset() can fail depending on which stack we're in. navigate()
-          // is the safe choice here: it works whether we're already inside
-          // AppStack (just switches screens) or the parent swap is about to
-          // remount AppStack fresh anyway (this call becomes a harmless no-op
-          // on an unmounting tree).
-          try {
-            navigation.navigate('Home' as never)
-          } catch {
-            // If "Home" genuinely isn't reachable from here (we're still
-            // inside AuthStack and the parent hasn't swapped yet), that's
-            // fine — RootNavigator's swap to AppStack will land on Home by
-            // itself once the re-render from setUser above takes effect.
-          }
+          // Do NOT call navigation.navigate('Home') here.
+          //
+          // pollLoginStatus already called setUser() in AuthContext, which
+          // causes RootNavigator to re-render. RootNavigator's
+          //   user ? <AppStack /> : <AuthStack />
+          // logic then unmounts AuthStack and mounts AppStack, whose initial
+          // screen IS Home — so navigation happens automatically without any
+          // explicit navigate() call from here.
+          //
+          // Calling navigate('Home') while still inside AuthStack (which has
+          // no 'Home' screen) is exactly what causes the error:
+          //   "The action 'NAVIGATE' with payload {"name":"Home"} was not
+          //    handled by any navigator."
         }
       } catch (e: unknown) {
         if (!cancelled) {
@@ -80,7 +72,7 @@ export default function WaitingForVerificationScreen() {
     const t = setInterval(tick, POLL_INTERVAL)
     tick() // also check immediately on mount instead of waiting a full interval
     return () => { cancelled = true; clearInterval(t) }
-  }, [purpose, pollLoginStatus, navigation])
+  }, [purpose, pollLoginStatus])
 
   useEffect(() => {
     if (cooldown <= 0) return
