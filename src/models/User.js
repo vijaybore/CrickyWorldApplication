@@ -11,7 +11,7 @@ const userSchema = new mongoose.Schema({
   // the login-confirm flow. loginTokenPurpose tells the confirm/status routes
   // which flow this token belongs to. The app polls login-status/:token until
   // confirmed flips to true, then receives the real JWT.
-  loginToken:         { type: String, select: false },
+  lloginToken: { type: String },
   loginTokenExpiry:   { type: Date },
   loginTokenPurpose:  { type: String, enum: ['register', 'login'] },
   loginTokenConfirmed: { type: Boolean, default: false },
