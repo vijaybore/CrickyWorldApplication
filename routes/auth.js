@@ -1,4 +1,5 @@
 // crickyworld-server/routes/auth.js
+// CRICKYWORLD_NO_VERIFY_LINK_V2 — direct login/register, no email verification step
 const express = require('express')
 const router  = express.Router()
 const jwt     = require('jsonwebtoken')
