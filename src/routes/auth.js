@@ -170,6 +170,7 @@ router.post('/register', async (req, res) => {
 })
 
 // ── POST /api/auth/login ──────────────────────────────────────────────────────
+// ── POST /api/auth/login ──────────────────────────────────────────────────────
 router.post('/login', async (req, res) => {
   try {
     const { email, password } = req.body
@@ -197,8 +198,7 @@ router.post('/login', async (req, res) => {
       user.loginTokenExpiry.getTime() > now + 9.5 * 60 * 1000 // issued < 30s ago
 
     if (tokenStillFresh) {
-     console.log(`[LOGIN] ${user.email} tokenStillFresh=${tokenStillFresh}, expiry=${user.loginTokenExpiry}, now+9.5min=${new Date(now + 9.5*60*1000)}`)
-     console.log(`[LOGIN] ${user.email} NEW token=${token.slice(0, 8)}... at ${new Date().toISOString()}`)
+      console.log(`[LOGIN] ${user.email} reusing fresh token=${user.loginToken.slice(0, 8)}... expiry=${user.loginTokenExpiry}`)
       return res.json({
         message: purpose === 'login'
           ? "We sent a link to your email to confirm it's you."

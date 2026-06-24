@@ -38,6 +38,7 @@ export default function WaitingForVerificationScreen() {
 
   useEffect(() => {
     let cancelled = false
+    let t: ReturnType<typeof setInterval>
 
     const tick = async () => {
       if (pollingRef.current || cancelled) return
@@ -45,6 +46,16 @@ export default function WaitingForVerificationScreen() {
       try {
         const confirmed = await pollLoginStatus(tokenRef.current, purpose)
         if (confirmed && !cancelled) {
+          // Stop polling THE MOMENT we know we're confirmed — don't wait for
+          // unmount. If we leave the interval running, the next tick (up to
+          // POLL_INTERVAL ms later) will call login-status again with the
+          // same token, but the server already deleted it on the successful
+          // call above. That second call then 404/410s with "Link expired",
+          // and the user sees that error flash right before the screen
+          // unmounts and Home appears. Clearing here closes that gap.
+          cancelled = true
+          clearInterval(t)
+
           // Do NOT call navigation.navigate('Home') here.
           //
           // pollLoginStatus already called setUser() in AuthContext, which
@@ -69,7 +80,7 @@ export default function WaitingForVerificationScreen() {
       }
     }
 
-    const t = setInterval(tick, POLL_INTERVAL)
+    t = setInterval(tick, POLL_INTERVAL)
     tick() // also check immediately on mount instead of waiting a full interval
     return () => { cancelled = true; clearInterval(t) }
   }, [purpose, pollLoginStatus])
