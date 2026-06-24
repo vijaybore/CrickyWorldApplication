@@ -45,15 +45,13 @@ export default function WaitingForVerificationScreen() {
       try {
         const confirmed = await pollLoginStatus(tokenRef.current, purpose)
         if (confirmed && !cancelled) {
-          // Don't just rely on RootNavigator's automatic AuthStack→AppStack
-          // swap on its own — explicitly reset navigation to Home right here.
-          // This guarantees the transition happens even if the parent
-          // navigator's re-render is delayed or this screen's own polling
-          // loop is what's keeping the JS thread busy at the exact moment
-          // the user state flips.
-          navigation.dispatch(
-            CommonActions.reset({ index: 0, routes: [{ name: 'Home' as never }] })
-          )
+          // Don't navigate manually here — this screen lives inside AuthStack,
+          // which has no "Home" route, so dispatching a reset to "Home" from
+          // here fails ("action not handled by any navigator"). Instead,
+          // pollLoginStatus already called setUser(...) on success, which
+          // flips RootNavigator's user ? <AppStack/> : <AuthStack/> check.
+          // That swap unmounts AuthStack (this screen included) and mounts
+          // AppStack fresh, landing on Home automatically — no action needed.
         }
       } catch (e: unknown) {
         if (!cancelled) {
