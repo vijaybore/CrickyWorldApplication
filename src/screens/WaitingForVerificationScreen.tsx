@@ -30,6 +30,11 @@ export default function WaitingForVerificationScreen() {
   // Guards against two polls (or a poll + a resend) racing each other and both
   // trying to finish login at once.
   const pollingRef = useRef(false)
+  // Keep the latest token in a ref too, so the interval callback (captured
+  // once when the effect was set up) always reads the current value instead
+  // of a stale one from a closure made at mount time.
+  const tokenRef = useRef(loginToken)
+  tokenRef.current = loginToken
 
   useEffect(() => {
     let cancelled = false
@@ -38,9 +43,17 @@ export default function WaitingForVerificationScreen() {
       if (pollingRef.current || cancelled) return
       pollingRef.current = true
       try {
-        const confirmed = await pollLoginStatus(loginToken, purpose)
+        const confirmed = await pollLoginStatus(tokenRef.current, purpose)
         if (confirmed && !cancelled) {
-          // RootNavigator handles this automatically 
+          // Don't just rely on RootNavigator's automatic AuthStack→AppStack
+          // swap on its own — explicitly reset navigation to Home right here.
+          // This guarantees the transition happens even if the parent
+          // navigator's re-render is delayed or this screen's own polling
+          // loop is what's keeping the JS thread busy at the exact moment
+          // the user state flips.
+          navigation.dispatch(
+            CommonActions.reset({ index: 0, routes: [{ name: 'Home' as never }] })
+          )
         }
       } catch (e: unknown) {
         if (!cancelled) {
@@ -55,7 +68,7 @@ export default function WaitingForVerificationScreen() {
     const t = setInterval(tick, POLL_INTERVAL)
     tick() // also check immediately on mount instead of waiting a full interval
     return () => { cancelled = true; clearInterval(t) }
-  }, [loginToken, purpose, pollLoginStatus, navigation])
+  }, [purpose, pollLoginStatus, navigation])
 
   useEffect(() => {
     if (cooldown <= 0) return
@@ -70,6 +83,7 @@ export default function WaitingForVerificationScreen() {
       const { message: msg, loginToken: freshToken } = await resendVerifyLink(email, purpose)
       setMessage(msg); setIsError(false)
       setLoginToken(freshToken)
+      tokenRef.current = freshToken
       setCooldown(RESEND_COOLDOWN)
     } catch (e: unknown) {
       setMessage((e as Error).message ?? 'Failed to resend. Try again.'); setIsError(true)
