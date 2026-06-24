@@ -183,9 +183,35 @@ router.post('/login', async (req, res) => {
     if (!match) return res.status(401).json({ message: 'Incorrect password' })
 
     const purpose = user.isVerified ? 'login' : 'register'
+
+    // ── Double-submit guard ──────────────────────────────────────────────────
+    // If a token was issued less than 30 seconds ago (> 9.5 min left on a
+    // 10-min expiry), reuse it and skip sending another email. This prevents
+    // a second /login call (e.g. user taps Sign In twice, or navigates back
+    // and retries) from overwriting the token the polling screen already holds,
+    // which would cause a permanent 404 on every subsequent poll.
+    const now = Date.now()
+    const tokenStillFresh =
+      user.loginToken &&
+      user.loginTokenExpiry &&
+      user.loginTokenExpiry.getTime() > now + 9.5 * 60 * 1000 // issued < 30s ago
+
+    if (tokenStillFresh) {
+      console.log(`Login attempt for ${user.email}: reusing fresh token ${user.loginToken.slice(0, 8)}...`)
+      return res.json({
+        message: purpose === 'login'
+          ? "We sent a link to your email to confirm it's you."
+          : 'Please verify your email first. We sent you a new verify link.',
+        verifyRequired: true,
+        purpose,
+        email: user.email,
+        loginToken: user.loginToken,
+      })
+    }
+
     const token = generateLoginToken()
     user.loginToken          = token
-    user.loginTokenExpiry    = new Date(Date.now() + 10 * 60 * 1000)
+    user.loginTokenExpiry    = new Date(now + 10 * 60 * 1000)
     user.loginTokenPurpose   = purpose
     user.loginTokenConfirmed = false
     await user.save()
@@ -218,12 +244,14 @@ router.get('/login-status/:token', async (req, res) => {
 
     if (!user) {
       console.log(`login-status poll: no user found for token ${req.params.token.slice(0, 8)}...`)
-      return res.status(404).json({ confirmed: false, message: 'Invalid or expired link' })
+      // Use 410 Gone (not 404) so the client knows this is terminal and throws
+      // an error for the user to see, rather than silently polling forever.
+      return res.status(410).json({ confirmed: false, message: 'Link expired. Please resend.' })
     }
 
     if (!user.loginTokenExpiry || user.loginTokenExpiry < new Date()) {
       console.log(`login-status poll: token expired for ${user.email}`)
-      return res.status(400).json({ confirmed: false, expired: true, message: 'Link expired. Please try again.' })
+      return res.status(410).json({ confirmed: false, expired: true, message: 'Link expired. Please resend.' })
     }
 
     if (!user.loginTokenConfirmed) {

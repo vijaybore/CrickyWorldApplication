@@ -42,12 +42,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [isGuest,  setIsGuest]  = useState(false)
   const [deviceId, setDeviceId] = useState<string | null>(null)
 
-  // Diagnostic: log every render so we can see in Metro's terminal exactly
-  // when `user` changes and whether RootNavigator should be re-rendering.
-  console.log(`[AuthProvider] render: user=${user ? user.email : 'null'}, loading=${loading}`)
-
   useEffect(() => {
-   const init = async () => {
+    const init = async () => {
       try {
         // Wake up Render server
         fetch(apiUrl('/api/auth/me')).catch(() => {})
@@ -104,29 +100,29 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // Does NOT set the user/token — that only happens once pollLoginStatus sees
   // the link has been confirmed.
   const loginWithEmail = useCallback(async (email: string, password: string): Promise<LoginResult> => {
-  const res = await fetch(apiUrl('/api/auth/login'), {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email, password }),
-  })
-  const data = await res.json() as { token?: string; user?: User; message?: string; purpose?: VerifyPurpose; email?: string; loginToken?: string }
-  if (!res.ok) throw new Error(data.message ?? 'Login failed')
+    const res = await fetch(apiUrl('/api/auth/login'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password }),
+    })
+    const data = await res.json() as { token?: string; user?: User; message?: string; purpose?: VerifyPurpose; email?: string; loginToken?: string }
+    if (!res.ok) throw new Error(data.message ?? 'Login failed')
 
-  // If direct token returned (no verify-link required)
-  if (data.token) {
-    await AsyncStorage.setItem('token', data.token)
-    await AsyncStorage.setItem('user', JSON.stringify(data.user))
-    await AsyncStorage.removeItem('isGuest')
-    setIsGuest(false)
-    setUser(data.user!)
-    return { purpose: 'login', email: data.user!.email ?? email, loginToken: '' }
-  }
-  return {
-    purpose:    data.purpose ?? 'login',
-    email:      data.email ?? email,
-    loginToken: data.loginToken ?? '',
-  }
-}, [])
+    // If direct token returned (no verify-link required)
+    if (data.token) {
+      await AsyncStorage.setItem('token', data.token)
+      await AsyncStorage.setItem('user', JSON.stringify(data.user))
+      await AsyncStorage.removeItem('isGuest')
+      setIsGuest(false)
+      setUser(data.user!)
+      return { purpose: 'login', email: data.user!.email ?? email, loginToken: '' }
+    }
+    return {
+      purpose:    data.purpose ?? 'login',
+      email:      data.email ?? email,
+      loginToken: data.loginToken ?? '',
+    }
+  }, [])
 
   const register = useCallback(async (name: string, email: string, password: string): Promise<LoginResult> => {
     const res = await fetch(apiUrl('/api/auth/register'), {
@@ -158,11 +154,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       token?: string; user?: User
     }
     console.log(`[pollLoginStatus] data=${JSON.stringify(data)}`)
-    if (res.status === 410) throw new Error('Link expired. Please resend.')
+
+    // 410 = explicitly expired, 404 = token not found (treat as expired/invalid)
+    // Both are terminal — throw so WaitingForVerificationScreen shows the error
+    // and lets the user resend, instead of silently polling forever.
+    if (res.status === 410 || res.status === 404) {
+      throw new Error(data.message ?? 'Link expired. Please resend.')
+    }
+
     if (!res.ok || !data.confirmed) {
       console.log('[pollLoginStatus] not confirmed yet, returning false')
       return false
     }
+
     console.log('[pollLoginStatus] CONFIRMED! Storing token and user, calling setUser...')
     await AsyncStorage.setItem('token', data.token!)
     await AsyncStorage.setItem('user',  JSON.stringify(data.user!))
@@ -203,11 +207,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const continueAsGuest = useCallback(async () => {
-  await AsyncStorage.multiRemove(['token', 'user'])
-  await AsyncStorage.setItem('isGuest', 'true')
-  setIsGuest(true)
-  setUser({ id: 'guest', name: 'Guest' })
-}, [])
+    await AsyncStorage.multiRemove(['token', 'user'])
+    await AsyncStorage.setItem('isGuest', 'true')
+    setIsGuest(true)
+    setUser({ id: 'guest', name: 'Guest' })
+  }, [])
 
   const logout = useCallback(async (): Promise<void> => {
     await clearAuth()
