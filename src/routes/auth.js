@@ -1,4 +1,3 @@
-
 // routes/auth.js
 const express = require('express')
 const router  = express.Router()
@@ -78,8 +77,8 @@ router.post('/register', async (req, res) => {
       email:      email.toLowerCase(),
       password:   hash,
       isVerified: false,
-      resetToken: magicToken,
-      resetTokenExpiry: new Date(Date.now() + 15 * 60 * 1000),
+      loginToken: magicToken,
+      loginTokenExpiry: new Date(Date.now() + 15 * 60 * 1000),
       ...(deviceId ? { deviceId } : {}),
     })
 
@@ -128,7 +127,7 @@ router.post('/login', async (req, res) => {
     const magicToken = crypto.randomBytes(32).toString('hex')
     await User.updateOne(
       { _id: user._id },
-      { $set: { resetToken: magicToken, resetTokenExpiry: new Date(Date.now() + 15 * 60 * 1000) } }
+      { $set: { loginToken: magicToken, loginTokenExpiry: new Date(Date.now() + 15 * 60 * 1000) } }
     )
 
     const verifyUrl = `${process.env.SERVER_URL}/api/auth/magic/${magicToken}`
@@ -166,8 +165,8 @@ router.post('/login', async (req, res) => {
 router.get('/magic/:token', async (req, res) => {
   try {
     const user = await User.findOne({
-      resetToken: req.params.token,
-      resetTokenExpiry: { $gt: new Date() },
+      loginToken: req.params.token,
+      loginTokenExpiry: { $gt: new Date() },
     })
 
     if (!user) {
@@ -182,7 +181,7 @@ router.get('/magic/:token', async (req, res) => {
     // Mark as verified and clear token
     await User.updateOne(
       { _id: user._id },
-      { $set: { isVerified: true }, $unset: { resetToken: 1, resetTokenExpiry: 1 } }
+      { $set: { isVerified: true, loginTokenConfirmed: true }, $unset: { loginToken: 1, loginTokenExpiry: 1 } }
     )
 
     const token = signToken(user._id)
@@ -228,7 +227,7 @@ router.post('/check-verified', async (req, res) => {
     const user = await User.findOne({ email: email.toLowerCase() })
     if (!user) return res.status(404).json({ message: 'User not found' })
 
-    if (!user.isVerified) {
+    if (!user.isVerified || !user.loginTokenConfirmed) {
       return res.status(202).json({ verified: false, message: 'Not verified yet' })
     }
 
@@ -307,6 +306,37 @@ router.get('/me', async (req, res) => {
     if (!user) return res.status(404).json({ message: 'User not found' })
     res.json({ _id: user._id, name: user.name, email: user.email })
   } catch { res.status(401).json({ message: 'Invalid or expired token' }) }
+})
+// ── GET /api/auth/login-status/:token ─────────────────────────────────────────
+router.get('/login-status/:token', async (req, res) => {
+  try {
+    const { deviceId } = req.query
+    const user = await User.findOne({ loginToken: req.params.token })
+
+    if (!user) {
+      return res.status(404).json({ confirmed: false, message: 'Token not found. Please resend.' })
+    }
+
+    if (!user.loginTokenConfirmed) {
+      return res.status(202).json({ confirmed: false, message: 'Waiting for link click' })
+    }
+
+    // Link was clicked — issue JWT and clear loginToken fields
+    await User.updateOne(
+      { _id: user._id },
+      {
+        $unset: { loginToken: 1, loginTokenExpiry: 1, loginTokenConfirmed: 1 },
+        ...(deviceId ? { $set: { deviceId: String(deviceId) } } : {}),
+      }
+    )
+
+    console.log(`✅ Login status confirmed for ${user.email}`)
+    const token = signToken(user._id)
+    res.json({ confirmed: true, token, user: { _id: user._id, name: user.name, email: user.email } })
+  } catch (err) {
+    console.error('Login status error:', err)
+    res.status(500).json({ message: 'Server error' })
+  }
 })
 
 module.exports = router
