@@ -1,10 +1,10 @@
 {
   "expo": {
     "name": "CrickyWorld",
-    "slug": "crickyworld",
+    "slug": "frontend",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/icon.png",
+    "icon": "./assets/Crickylogo.jpeg",
     "userInterfaceStyle": "light",
     "ios": {
       "supportsTablet": true,
@@ -12,10 +12,8 @@
     },
     "android": {
       "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
-        "foregroundImage": "./assets/android-icon-foreground.png",
-        "backgroundImage": "./assets/android-icon-background.png",
-        "monochromeImage": "./assets/android-icon-monochrome.png"
+        "backgroundColor": "#FFFFFF",
+        "foregroundImage": "./assets/Crickylogo.jpeg"
       },
       "predictiveBackGestureEnabled": false,
       "package": "com.vijaybore.crickyworld",
@@ -28,6 +26,7 @@
       "eas": {
         "projectId": "0c5f6ecb-6be6-437a-b00e-4cded7aa18a4"
       }
-    }
+    },
+    "owner": "vijaybore"
   }
 }
