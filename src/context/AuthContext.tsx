@@ -17,13 +17,36 @@ interface AuthContextValue {
   loginWithDevice: () => Promise<boolean>
   continueAsGuest: () => Promise<void>
   logout:          () => Promise<void>
-  completeVerification: (token: string, userProfile: User) => Promise<void>
+  completeVerification: (token: string, userProfile: User, refreshToken?: string) => Promise<void>
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null)
 
 async function clearAuth(): Promise<void> {
-  await AsyncStorage.multiRemove(['token', 'user', 'isGuest'])
+  await AsyncStorage.multiRemove(['token', 'refreshToken', 'user', 'isGuest'])
+}
+
+// Attempts to refresh the access token using the stored refresh token.
+// Returns the new access token on success, or null if refresh failed
+// (refresh token missing, expired, or revoked) — caller should fall back
+// to device-login or the login screen in that case.
+async function tryRefreshAccessToken(): Promise<string | null> {
+  try {
+    const refreshToken = await AsyncStorage.getItem('refreshToken')
+    if (!refreshToken) return null
+    const res = await fetch(apiUrl('/api/auth/refresh-token'), {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ refreshToken }),
+    })
+    if (!res.ok) return null
+    const data = await res.json() as { token?: string }
+    if (!data.token) return null
+    await AsyncStorage.setItem('token', data.token)
+    return data.token
+  } catch {
+    return null
+  }
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
@@ -57,6 +80,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
               headers: { Authorization: `Bearer ${token}` },
             })
             if (res.ok) { setUser(await res.json() as User); return }
+
+            // Access token expired/invalid — try a silent refresh before
+            // giving up and falling through to device-login.
+            if (res.status === 401) {
+              const refreshed = await tryRefreshAccessToken()
+              if (refreshed) {
+                const retryRes = await fetch(apiUrl('/api/auth/me'), {
+                  headers: { Authorization: `Bearer ${refreshed}` },
+                })
+                if (retryRes.ok) { setUser(await retryRes.json() as User); return }
+              }
+            }
           } catch { }
         }
 
@@ -68,9 +103,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             body:    JSON.stringify({ deviceId: did }),
           })
           if (res.ok) {
-            const data = await res.json() as { token?: string; user?: User }
+            const data = await res.json() as { token?: string; refreshToken?: string; user?: User }
             if (data.token && data.user) {
               await AsyncStorage.setItem('token', data.token)
+              if (data.refreshToken) await AsyncStorage.setItem('refreshToken', data.refreshToken)
               await AsyncStorage.setItem('user',  JSON.stringify(data.user))
               setUser(data.user); return
             }
@@ -140,9 +176,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return { verifyRequired: false }
   }, [])
 
-  const completeVerification = useCallback(async (token: string, userProfile: User): Promise<void> => {
+  const completeVerification = useCallback(async (token: string, userProfile: User, refreshToken?: string): Promise<void> => {
     const did = await getDeviceId()
     await AsyncStorage.setItem('token', token)
+    if (refreshToken) await AsyncStorage.setItem('refreshToken', refreshToken)
     await AsyncStorage.setItem('user',  JSON.stringify(userProfile))
     await AsyncStorage.removeItem('isGuest')
     setIsGuest(false)
@@ -159,9 +196,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         body:    JSON.stringify({ deviceId: did }),
       })
       if (!res.ok) return false
-      const data = await res.json() as { token?: string; user?: User }
+      const data = await res.json() as { token?: string; refreshToken?: string; user?: User }
       if (!data.token || !data.user) return false
       await AsyncStorage.setItem('token', data.token)
+      if (data.refreshToken) await AsyncStorage.setItem('refreshToken', data.refreshToken)
       await AsyncStorage.setItem('user',  JSON.stringify(data.user))
       setUser(data.user)
       return true
@@ -180,9 +218,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const logout = useCallback(async (): Promise<void> => {
-    await clearAuth()
-    setUser(null)
-    setIsGuest(false)
+    try {
+      const refreshToken = await AsyncStorage.getItem('refreshToken')
+      // Best-effort: revoke the refresh token server-side so it can't be
+      // replayed later. Local logout proceeds regardless of the result —
+      // we never want a flaky network to trap the user on the Home screen.
+      await fetch(apiUrl('/api/auth/logout'), {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ refreshToken }),
+      }).catch(() => {})
+    } finally {
+      await clearAuth()
+      setUser(null)
+      setIsGuest(false)
+    }
   }, [])
 
   return (

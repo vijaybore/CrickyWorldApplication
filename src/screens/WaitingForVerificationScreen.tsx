@@ -49,7 +49,7 @@ export default function WaitingForVerificationScreen() {
           return
         }
 
-        const data = await res.json() as { confirmed: boolean; token?: string; user?: any; message?: string }
+        const data = await res.json() as { confirmed: boolean; token?: string; refreshToken?: string; user?: any; message?: string }
         if (!res.ok) {
           // If we got another error, don't break polling unless it's a critical error
           console.warn('[Polling] checkStatus returned non-ok:', data.message)
@@ -60,7 +60,7 @@ export default function WaitingForVerificationScreen() {
           if (timerId) clearInterval(timerId)
           setSuccessMsg('Email verified! Redirecting...')
           // Log user in and switch navigation stack
-          await completeVerification(data.token, data.user)
+          await completeVerification(data.token, data.user, data.refreshToken)
         }
       } catch (err: unknown) {
         console.error('[Polling] Error:', err)

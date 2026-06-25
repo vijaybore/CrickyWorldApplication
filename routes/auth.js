@@ -1,13 +1,46 @@
 // crickyworld-server/routes/auth.js
-const express = require('express')
-const router  = express.Router()
-const jwt     = require('jsonwebtoken')
-const bcrypt  = require('bcryptjs')
-const crypto  = require('crypto')
-const User    = require('../models/User')
+const express     = require('express')
+const router       = express.Router()
+const jwt          = require('jsonwebtoken')
+const bcrypt       = require('bcryptjs')
+const crypto       = require('crypto')
+const rateLimit    = require('express-rate-limit')
+const User         = require('../models/User')
 
 const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token'
 const GMAIL_SEND_URL   = 'https://gmail.googleapis.com/gmail/v1/users/me/messages/send'
+
+// ── Rate limiters ──────────────────────────────────────────────────────────────
+// Applied per-route below. Keyed by IP; tune windowMs/max if you see false
+// positives from shared NAT (e.g. campus wifi, corporate proxies).
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 min
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { message: 'Too many login attempts. Please try again in a few minutes.' },
+})
+const registerLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000, // 1 hour
+  max: 8,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { message: 'Too many accounts created from this network. Please try again later.' },
+})
+const forgotPasswordLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { message: 'Too many reset requests. Please try again in a few minutes.' },
+})
+const resendLinkLimiter = rateLimit({
+  windowMs: 10 * 60 * 1000,
+  max: 6,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { message: 'Too many resend requests. Please wait a bit before trying again.' },
+})
 
 async function getAccessToken() {
   const res = await fetch(GOOGLE_TOKEN_URL, {
@@ -111,8 +144,30 @@ async function sendMail(to, subject, html) {
   }
 }
 
-function signToken(userId) {
-  return jwt.sign({ id: userId }, process.env.JWT_SECRET, { expiresIn: '90d' })
+function signAccessToken(userId) {
+  // Short-lived access token. The app should silently refresh this using
+  // the refresh token rather than relying on a long expiry.
+  return jwt.sign({ id: userId }, process.env.JWT_SECRET, { expiresIn: '15m' })
+}
+
+function generateRefreshToken() {
+  return crypto.randomBytes(40).toString('hex')
+}
+
+function hashRefreshToken(token) {
+  return crypto.createHash('sha256').update(token).digest('hex')
+}
+
+// Issues a fresh access + refresh token pair for a user and persists the
+// hashed refresh token. Call this anywhere a user completes login
+// (confirm-link polling success, device-login).
+async function issueTokenPair(user) {
+  const accessToken  = signAccessToken(user._id)
+  const refreshToken = generateRefreshToken()
+  user.refreshTokenHash   = hashRefreshToken(refreshToken)
+  user.refreshTokenExpiry = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000) // 30 days
+  await user.save()
+  return { accessToken, refreshToken }
 }
 
 function generateLoginToken() {
@@ -177,7 +232,7 @@ async function sendResetEmail(email, name, token, serverUrl) {
 }
 
 // ── POST /api/auth/register ───────────────────────────────────────────────────
-router.post('/register', async (req, res) => {
+router.post('/register', registerLimiter, async (req, res) => {
   try {
     const { name, email, password, deviceId } = req.body
     if (!name || !email || !password)
@@ -220,7 +275,7 @@ router.post('/register', async (req, res) => {
 })
 
 // ── POST /api/auth/login ──────────────────────────────────────────────────────
-router.post('/login', async (req, res) => {
+router.post('/login', loginLimiter, async (req, res) => {
   try {
     const { email, password } = req.body
     if (!email || !password)
@@ -319,12 +374,13 @@ router.get('/login-status/:token', async (req, res) => {
     user.loginTokenConfirmed = false
     await user.save()
 
-    console.log(`[login-status] confirmed for ${user.email}, issuing JWT`)
-    const jwtToken = signToken(user._id)
+    console.log(`[login-status] confirmed for ${user.email}, issuing token pair`)
+    const { accessToken, refreshToken } = await issueTokenPair(user)
     res.json({
-      confirmed: true,
-      token:     jwtToken,
-      user:      { _id: user._id, name: user.name, email: user.email },
+      confirmed:    true,
+      token:        accessToken,
+      refreshToken,
+      user:         { _id: user._id, name: user.name, email: user.email },
     })
   } catch (err) {
     console.error('Login status error:', err)
@@ -367,7 +423,7 @@ router.get('/confirm-link/:token', async (req, res) => {
 })
 
 // ── POST /api/auth/resend-link ────────────────────────────────────────────────
-router.post('/resend-link', async (req, res) => {
+router.post('/resend-link', resendLinkLimiter, async (req, res) => {
   try {
     const { email, purpose } = req.body
     if (!email || !purpose)
@@ -397,7 +453,7 @@ router.post('/resend-link', async (req, res) => {
 })
 
 // ── POST /api/auth/forgot-password ───────────────────────────────────────────
-router.post('/forgot-password', async (req, res) => {
+router.post('/forgot-password', forgotPasswordLimiter, async (req, res) => {
   try {
     const { email } = req.body
     if (!email) return res.status(400).json({ message: 'Email is required' })
@@ -522,8 +578,8 @@ router.post('/device-login', async (req, res) => {
     const user = await User.findOne({ deviceId })
     if (!user)           return res.status(404).json({ message: 'Device not registered' })
     if (!user.isVerified) return res.status(403).json({ message: 'Email not verified' })
-    const token = signToken(user._id)
-    res.json({ token, user: { _id: user._id, name: user.name, email: user.email } })
+    const { accessToken, refreshToken } = await issueTokenPair(user)
+    res.json({ token: accessToken, refreshToken, user: { _id: user._id, name: user.name, email: user.email } })
   } catch (err) {
     res.status(500).json({ message: 'Server error' })
   }
@@ -541,6 +597,52 @@ router.get('/me', async (req, res) => {
     res.json({ _id: user._id, name: user.name, email: user.email })
   } catch {
     res.status(401).json({ message: 'Invalid or expired token' })
+  }
+})
+
+// ── POST /api/auth/refresh-token ─────────────────────────────────────────────
+// Exchanges a valid refresh token for a new short-lived access token.
+// Call this when /api/auth/me returns 401 due to access token expiry.
+router.post('/refresh-token', async (req, res) => {
+  try {
+    const { refreshToken } = req.body
+    if (!refreshToken) return res.status(400).json({ message: 'refreshToken required' })
+
+    const hash = hashRefreshToken(refreshToken)
+    const user = await User.findOne({ refreshTokenHash: hash }).select('+refreshTokenHash')
+    if (!user) return res.status(401).json({ message: 'Invalid refresh token' })
+
+    if (!user.refreshTokenExpiry || user.refreshTokenExpiry < new Date()) {
+      return res.status(401).json({ message: 'Refresh token expired. Please log in again.' })
+    }
+
+    const accessToken = signAccessToken(user._id)
+    res.json({ token: accessToken, user: { _id: user._id, name: user.name, email: user.email } })
+  } catch (err) {
+    console.error('Refresh token error:', err)
+    res.status(500).json({ message: 'Server error' })
+  }
+})
+
+// ── POST /api/auth/logout ────────────────────────────────────────────────────
+// Revokes the refresh token server-side so it can't be replayed after logout.
+// The client still clears its own local storage separately.
+router.post('/logout', async (req, res) => {
+  try {
+    const { refreshToken } = req.body
+    if (refreshToken) {
+      const hash = hashRefreshToken(refreshToken)
+      await User.updateOne(
+        { refreshTokenHash: hash },
+        { $unset: { refreshTokenHash: 1, refreshTokenExpiry: 1 } }
+      )
+    }
+    res.json({ message: 'Logged out successfully' })
+  } catch (err) {
+    console.error('Logout error:', err)
+    // Logout should never block the client from clearing local state, so
+    // we still return 200 here even on a server-side hiccup.
+    res.json({ message: 'Logged out' })
   }
 })
 
