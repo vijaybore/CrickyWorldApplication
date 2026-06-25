@@ -1,13 +1,14 @@
 {
   "expo": {
-    "name": "frontend",
-    "slug": "frontend",
+    "name": "CrickyWorld",
+    "slug": "crickyworld",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.vijaybore.crickyworld"
     },
     "android": {
       "adaptiveIcon": {
@@ -17,7 +18,8 @@
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
       "predictiveBackGestureEnabled": false,
-      "package": "com.vijaybore.frontend"
+      "package": "com.vijaybore.crickyworld",
+      "versionCode": 1
     },
     "web": {
       "favicon": "./assets/favicon.png"
