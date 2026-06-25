@@ -42,11 +42,14 @@ export default function RegisterScreen() {
     submittingRef.current = true
     setLoading(true)
     try {
-      // Creates the account and logs in directly — no email verify-link
-      // step. AuthContext's register() sets the user/token itself;
-      // RootNavigator picks up the change automatically and swaps to
-      // AppStack.
-      await register(name.trim(), email.trim().toLowerCase(), password)
+      const res = await register(name.trim(), email.trim().toLowerCase(), password)
+      if (res && res.verifyRequired) {
+        navigation.navigate('WaitingForVerification', {
+          email: email.trim().toLowerCase(),
+          purpose: 'register',
+          loginToken: res.loginToken || '',
+        })
+      }
     } catch (e: unknown) {
       setError((e as Error).message ?? 'Registration failed. Please try again.')
     } finally {

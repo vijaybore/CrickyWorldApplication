@@ -44,7 +44,54 @@ function buildRawEmail({ from, to, subject, html }) {
 }
 
 async function sendMail(to, subject, html) {
+  // Try Resend if configured
+  if (process.env.RESEND_API_KEY) {
+    try {
+      console.log('Attempting to send email via Resend...')
+      const { Resend } = require('resend')
+      const resend = new Resend(process.env.RESEND_API_KEY)
+      const fromEmail = process.env.FROM_EMAIL || 'onboarding@resend.dev'
+      const data = await resend.emails.send({
+        from: `CrickyWorld <${fromEmail}>`,
+        to,
+        subject,
+        html,
+      })
+      console.log(`Email sent via Resend to ${to}: ${subject}`, data)
+      return
+    } catch (err) {
+      console.error('Failed to send email via Resend, falling back...', err.message)
+    }
+  }
+
+  // Try Nodemailer SMTP if GMAIL_USER and GMAIL_PASS are configured
+  if (process.env.GMAIL_USER && process.env.GMAIL_PASS) {
+    try {
+      console.log('Attempting to send email via Nodemailer SMTP...')
+      const nodemailer = require('nodemailer')
+      const transporter = nodemailer.createTransport({
+        service: 'gmail',
+        auth: {
+          user: process.env.GMAIL_USER,
+          pass: process.env.GMAIL_PASS,
+        },
+      })
+      await transporter.sendMail({
+        from: `"CrickyWorld" <${process.env.GMAIL_USER}>`,
+        to,
+        subject,
+        html,
+      })
+      console.log(`Email sent via Nodemailer SMTP to ${to}: ${subject}`)
+      return
+    } catch (err) {
+      console.error('Failed to send email via Nodemailer SMTP, falling back...', err.message)
+    }
+  }
+
+  // Fallback to Google OAuth/Gmail API
   try {
+    console.log('Attempting to send email via Gmail API OAuth...')
     const accessToken = await getAccessToken()
     const raw = buildRawEmail({ from: process.env.GMAIL_USER, to, subject, html })
     const res = await fetch(GMAIL_SEND_URL, {
@@ -57,7 +104,7 @@ async function sendMail(to, subject, html) {
       console.error(`Failed to send email to ${to}:`, JSON.stringify(data))
       throw new Error(data?.error?.message || 'Failed to send email')
     }
-    console.log(`Email sent to ${to}: ${subject}`)
+    console.log(`Email sent via Gmail API OAuth to ${to}: ${subject}`)
   } catch (err) {
     console.error(`Failed to send email to ${to}:`, err.message)
     throw err
@@ -72,14 +119,15 @@ function generateLoginToken() {
   return crypto.randomBytes(32).toString('hex')
 }
 
-async function sendVerifyLinkEmail(email, name, token, purpose) {
+async function sendVerifyLinkEmail(email, name, token, purpose, serverUrl) {
   const isLogin   = purpose === 'login'
   const subject   = isLogin ? "Confirm it's you on CrickyWorld" : 'Verify your CrickyWorld account'
   const heading   = isLogin ? `Confirm it's you, ${name}!` : `Hey ${name}!`
   const intro     = isLogin
     ? 'Tap the button below on this device to finish signing in to CrickyWorld.'
     : 'Thanks for joining CrickyWorld! Tap the button below to verify your email and activate your account.'
-  const confirmUrl = `${process.env.SERVER_URL}/api/auth/confirm-link/${token}`
+  const baseUrl    = serverUrl || process.env.SERVER_URL || 'https://crickyworld-appserver.onrender.com'
+  const confirmUrl = `${baseUrl}/api/auth/confirm-link/${token}`
 
   console.log(`Building verify link for ${email}: ${confirmUrl}`)
 
@@ -104,8 +152,9 @@ async function sendVerifyLinkEmail(email, name, token, purpose) {
   await sendMail(email, subject, html)
 }
 
-async function sendResetEmail(email, name, token) {
-  const resetUrl = `${process.env.SERVER_URL}/api/auth/reset-password/${token}`
+async function sendResetEmail(email, name, token, serverUrl) {
+  const baseUrl  = serverUrl || process.env.SERVER_URL || 'https://crickyworld-appserver.onrender.com'
+  const resetUrl = `${baseUrl}/api/auth/reset-password/${token}`
   const html = `
     <div style="font-family:sans-serif;max-width:480px;margin:auto;background:#0a0a0a;color:#f0f0f0;border-radius:16px;overflow:hidden">
       <div style="background:#cc0000;padding:24px;text-align:center">
@@ -154,7 +203,8 @@ router.post('/register', async (req, res) => {
     })
 
     console.log(`New user registered: ${user.email}, sending verify link...`)
-    await sendVerifyLinkEmail(user.email, user.name, token, 'register')
+    const serverUrl = process.env.SERVER_URL || `${req.protocol}://${req.get('host')}`
+    await sendVerifyLinkEmail(user.email, user.name, token, 'register', serverUrl)
 
     res.status(201).json({
       message:        'Account created! Check your email and tap the verify link to activate it.',
@@ -218,7 +268,8 @@ router.post('/login', async (req, res) => {
     await user.save()
 
     console.log(`[login] new token for ${user.email}, purpose=${purpose}, token=${token.slice(0, 8)}...`)
-    await sendVerifyLinkEmail(user.email, user.name, token, purpose)
+    const serverUrl = process.env.SERVER_URL || `${req.protocol}://${req.get('host')}`
+    await sendVerifyLinkEmail(user.email, user.name, token, purpose, serverUrl)
     console.log(`[login] email sent to ${user.email}`)
 
     res.json({
@@ -336,7 +387,8 @@ router.post('/resend-link', async (req, res) => {
     await user.save()
 
     console.log(`[resend-link] sending to ${user.email}, purpose=${purpose}`)
-    await sendVerifyLinkEmail(user.email, user.name, token, purpose)
+    const serverUrl = process.env.SERVER_URL || `${req.protocol}://${req.get('host')}`
+    await sendVerifyLinkEmail(user.email, user.name, token, purpose, serverUrl)
     res.json({ message: 'A new link has been sent to your email.', loginToken: token })
   } catch (err) {
     console.error('Resend link error:', err)
@@ -358,7 +410,8 @@ router.post('/forgot-password', async (req, res) => {
     user.resetTokenExpiry = new Date(Date.now() + 60 * 60 * 1000)
     await user.save()
 
-    await sendResetEmail(email.toLowerCase(), user.name, resetToken)
+    const serverUrl = process.env.SERVER_URL || `${req.protocol}://${req.get('host')}`
+    await sendResetEmail(email.toLowerCase(), user.name, resetToken, serverUrl)
     res.json({ message: 'If this email exists, a reset link has been sent.' })
   } catch (err) {
     console.error('Forgot password error:', err)
@@ -492,3 +545,4 @@ router.get('/me', async (req, res) => {
 })
 
 module.exports = router
+```

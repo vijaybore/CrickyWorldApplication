@@ -23,6 +23,7 @@ import SettingsScreen      from '../screens/Settingsscreen'
 import ScoringScreen       from '../screens/ScoringScreen'
 import TournamentsScreen   from '../screens/Tournamentsscreen'
 import PlayerProfileScreen from '../screens/PlayerProfileScreen'
+import WaitingForVerificationScreen from '../screens/WaitingForVerificationScreen'
 
 type TabList = {
   HomeTab:     undefined
@@ -71,6 +72,7 @@ function AuthStack() {
       <Stack.Screen name="Login"    component={LoginScreen} />
       <Stack.Screen name="Register" component={RegisterScreen} />
       <Stack.Screen name="ForgotPassword" component={ForgotPasswordScreen} />
+      <Stack.Screen name="WaitingForVerification" component={WaitingForVerificationScreen} />
     </Stack.Navigator>
   )
 }
@@ -104,6 +106,8 @@ function AppStack() {
       <Stack.Screen name="Login"         component={LoginScreen}
         options={{ animation: 'slide_from_bottom', presentation: 'modal' }} />
       <Stack.Screen name="Register"      component={RegisterScreen}
+        options={{ animation: 'slide_from_bottom', presentation: 'modal' }} />
+      <Stack.Screen name="WaitingForVerification" component={WaitingForVerificationScreen}
         options={{ animation: 'slide_from_bottom', presentation: 'modal' }} />
     </Stack.Navigator>
   )

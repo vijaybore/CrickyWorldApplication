@@ -1,5 +1,4 @@
 // crickyworld-server/routes/auth.js
-// CRICKYWORLD_NO_VERIFY_LINK_V2 — direct login/register, no email verification step
 const express = require('express')
 const router  = express.Router()
 const jwt     = require('jsonwebtoken')
@@ -45,7 +44,54 @@ function buildRawEmail({ from, to, subject, html }) {
 }
 
 async function sendMail(to, subject, html) {
+  // Try Resend if configured
+  if (process.env.RESEND_API_KEY) {
+    try {
+      console.log('Attempting to send email via Resend...')
+      const { Resend } = require('resend')
+      const resend = new Resend(process.env.RESEND_API_KEY)
+      const fromEmail = process.env.FROM_EMAIL || 'onboarding@resend.dev'
+      const data = await resend.emails.send({
+        from: `CrickyWorld <${fromEmail}>`,
+        to,
+        subject,
+        html,
+      })
+      console.log(`Email sent via Resend to ${to}: ${subject}`, data)
+      return
+    } catch (err) {
+      console.error('Failed to send email via Resend, falling back...', err.message)
+    }
+  }
+
+  // Try Nodemailer SMTP if GMAIL_USER and GMAIL_PASS are configured
+  if (process.env.GMAIL_USER && process.env.GMAIL_PASS) {
+    try {
+      console.log('Attempting to send email via Nodemailer SMTP...')
+      const nodemailer = require('nodemailer')
+      const transporter = nodemailer.createTransport({
+        service: 'gmail',
+        auth: {
+          user: process.env.GMAIL_USER,
+          pass: process.env.GMAIL_PASS,
+        },
+      })
+      await transporter.sendMail({
+        from: `"CrickyWorld" <${process.env.GMAIL_USER}>`,
+        to,
+        subject,
+        html,
+      })
+      console.log(`Email sent via Nodemailer SMTP to ${to}: ${subject}`)
+      return
+    } catch (err) {
+      console.error('Failed to send email via Nodemailer SMTP, falling back...', err.message)
+    }
+  }
+
+  // Fallback to Google OAuth/Gmail API
   try {
+    console.log('Attempting to send email via Gmail API OAuth...')
     const accessToken = await getAccessToken()
     const raw = buildRawEmail({ from: process.env.GMAIL_USER, to, subject, html })
     const res = await fetch(GMAIL_SEND_URL, {
@@ -58,7 +104,7 @@ async function sendMail(to, subject, html) {
       console.error(`Failed to send email to ${to}:`, JSON.stringify(data))
       throw new Error(data?.error?.message || 'Failed to send email')
     }
-    console.log(`Email sent to ${to}: ${subject}`)
+    console.log(`Email sent via Gmail API OAuth to ${to}: ${subject}`)
   } catch (err) {
     console.error(`Failed to send email to ${to}:`, err.message)
     throw err
@@ -69,12 +115,22 @@ function signToken(userId) {
   return jwt.sign({ id: userId }, process.env.JWT_SECRET, { expiresIn: '90d' })
 }
 
-// ── Welcome email ──────────────────────────────────────────────────────────
-// Purely informational now. Sent in the background after registration; the
-// user is already logged in by the time this fires, so a failure here (e.g.
-// Gmail API hiccup) must never block or affect the registration response.
-async function sendWelcomeEmail(email, name) {
-  const subject = 'Welcome to CrickyWorld!'
+function generateLoginToken() {
+  return crypto.randomBytes(32).toString('hex')
+}
+
+async function sendVerifyLinkEmail(email, name, token, purpose, serverUrl) {
+  const isLogin   = purpose === 'login'
+  const subject   = isLogin ? "Confirm it's you on CrickyWorld" : 'Verify your CrickyWorld account'
+  const heading   = isLogin ? `Confirm it's you, ${name}!` : `Hey ${name}!`
+  const intro     = isLogin
+    ? 'Tap the button below on this device to finish signing in to CrickyWorld.'
+    : 'Thanks for joining CrickyWorld! Tap the button below to verify your email and activate your account.'
+  const baseUrl    = serverUrl || process.env.SERVER_URL || 'https://crickyworld-appserver.onrender.com'
+  const confirmUrl = `${baseUrl}/api/auth/confirm-link/${token}`
+
+  console.log(`Building verify link for ${email}: ${confirmUrl}`)
+
   const html = `
     <div style="font-family:sans-serif;max-width:480px;margin:auto;background:#0a0a0a;color:#f0f0f0;border-radius:16px;overflow:hidden">
       <div style="background:#cc0000;padding:24px;text-align:center">
@@ -82,17 +138,23 @@ async function sendWelcomeEmail(email, name) {
         <p style="margin:4px 0 0;opacity:0.8;font-size:13px">SCORE TRACK WIN</p>
       </div>
       <div style="padding:32px">
-        <h2 style="color:#ff4444;margin-top:0">Hey ${name}!</h2>
-        <p style="color:#aaa;line-height:1.6">Thanks for joining CrickyWorld! Your account is ready to go — start scoring matches, tracking players, and building your stats right away.</p>
-        <p style="color:#555;font-size:12px;text-align:center;margin-top:24px">You're receiving this because you signed up at CrickyWorld with this email address.</p>
+        <h2 style="color:#ff4444;margin-top:0">${heading}</h2>
+        <p style="color:#aaa;line-height:1.6">${intro}</p>
+        <div style="text-align:center;margin:32px 0">
+          <a href="${confirmUrl}" style="background:#cc0000;color:#fff;padding:14px 32px;border-radius:10px;text-decoration:none;font-weight:700;font-size:15px;display:inline-block">
+            Verify it's you
+          </a>
+        </div>
+        <p style="color:#555;font-size:12px;text-align:center">This link expires in 10 minutes. Never share it with anyone.</p>
       </div>
     </div>
   `
   await sendMail(email, subject, html)
 }
 
-async function sendResetEmail(email, name, token) {
-  const resetUrl = `${process.env.SERVER_URL}/api/auth/reset-password/${token}`
+async function sendResetEmail(email, name, token, serverUrl) {
+  const baseUrl  = serverUrl || process.env.SERVER_URL || 'https://crickyworld-appserver.onrender.com'
+  const resetUrl = `${baseUrl}/api/auth/reset-password/${token}`
   const html = `
     <div style="font-family:sans-serif;max-width:480px;margin:auto;background:#0a0a0a;color:#f0f0f0;border-radius:16px;overflow:hidden">
       <div style="background:#cc0000;padding:24px;text-align:center">
@@ -107,7 +169,7 @@ async function sendResetEmail(email, name, token) {
             Reset My Password
           </a>
         </div>
-        <p style="color:#555;font-size:12px;text-align:center">This link expires in 1 hour. If you didn't request this, ignore this email.</p>
+        <p style="color:#555;font-size:12px;text-align:center">This link expires in 1 hour. If you did not request this, ignore this email.</p>
       </div>
     </div>
   `
@@ -115,9 +177,6 @@ async function sendResetEmail(email, name, token) {
 }
 
 // ── POST /api/auth/register ───────────────────────────────────────────────────
-// Creates the account and logs the user in immediately — no email-link
-// verification step. A welcome email is fired in the background afterward;
-// it's purely informational and never blocks or delays the response.
 router.post('/register', async (req, res) => {
   try {
     const { name, email, password, deviceId } = req.body
@@ -128,28 +187,31 @@ router.post('/register', async (req, res) => {
     if (existing)
       return res.status(409).json({ message: 'An account with this email already exists' })
 
-    const hash = await bcrypt.hash(password, 12)
+    const hash  = await bcrypt.hash(password, 12)
+    const token = generateLoginToken()
 
     const user = await User.create({
       name,
-      email: email.toLowerCase(),
-      password: hash,
+      email:               email.toLowerCase(),
+      password:            hash,
       ...(deviceId ? { deviceId } : {}),
-      isVerified: true, // no email-link verification step anymore
+      isVerified:          false,
+      loginToken:          token,
+      loginTokenExpiry:    new Date(Date.now() + 10 * 60 * 1000),
+      loginTokenPurpose:   'register',
+      loginTokenConfirmed: false,
     })
 
-    console.log(`New user registered: ${user.email}, logging in immediately`)
+    console.log(`New user registered: ${user.email}, sending verify link...`)
+    const serverUrl = process.env.SERVER_URL || `${req.protocol}://${req.get('host')}`
+    await sendVerifyLinkEmail(user.email, user.name, token, 'register', serverUrl)
 
-    // Fire-and-forget — registration must succeed regardless of email outcome.
-    sendWelcomeEmail(user.email, user.name).catch(err =>
-      console.error(`Welcome email failed for ${user.email}:`, err.message)
-    )
-
-    const token = signToken(user._id)
     res.status(201).json({
-      message: 'Account created!',
-      token,
-      user: { _id: user._id, name: user.name, email: user.email },
+      message:        'Account created! Check your email and tap the verify link to activate it.',
+      verifyRequired: true,
+      purpose:        'register',
+      email:          user.email,
+      loginToken:     token,
     })
   } catch (err) {
     console.error('Register error:', err)
@@ -158,31 +220,66 @@ router.post('/register', async (req, res) => {
 })
 
 // ── POST /api/auth/login ──────────────────────────────────────────────────────
-// Verifies email + password and logs the user in immediately — no
-// email-link verification step.
 router.post('/login', async (req, res) => {
   try {
-    const { email, password, deviceId } = req.body
+    const { email, password } = req.body
     if (!email || !password)
       return res.status(400).json({ message: 'Email and password are required' })
 
-    const user = await User.findOne({ email: email.toLowerCase() }).select('+password')
+    // FIX 1: select loginToken + loginTokenExpiry so the double-submit guard
+    // can actually read them (both have select:false in the User schema).
+    const user = await User.findOne({ email: email.toLowerCase() })
+      .select('+password +loginToken +loginTokenExpiry')
     if (!user) return res.status(401).json({ message: 'No account found with this email' })
 
     const match = await bcrypt.compare(password, user.password)
     if (!match) return res.status(401).json({ message: 'Incorrect password' })
 
-    if (deviceId && user.deviceId !== String(deviceId)) {
-      user.deviceId = String(deviceId)
-      await user.save()
+    const purpose = user.isVerified ? 'login' : 'register'
+    const now     = Date.now()
+
+    // FIX 2: If a fresh token already exists (issued < 30s ago, so > 9.5 min
+    // remaining on a 10-min expiry) reuse it instead of overwriting. Without
+    // this, a double-tap or a back-and-retry generates a second token that
+    // overwrites the first, making every subsequent poll return 410.
+    const tokenStillFresh =
+      user.loginToken &&
+      user.loginTokenExpiry &&
+      user.loginTokenExpiry.getTime() > now + 9.5 * 60 * 1000
+
+    if (tokenStillFresh) {
+      console.log(`[login] reusing fresh token for ${user.email}`)
+      return res.json({
+        message:        purpose === 'login'
+          ? "We sent a link to your email to confirm it's you."
+          : 'Please verify your email first. We sent you a new verify link.',
+        verifyRequired: true,
+        purpose,
+        email:          user.email,
+        loginToken:     user.loginToken,
+      })
     }
 
-    console.log(`Login success for ${user.email}`)
-    const token = signToken(user._id)
+    const token = generateLoginToken()
+    user.loginToken          = token
+    user.loginTokenExpiry    = new Date(now + 10 * 60 * 1000)
+    user.loginTokenPurpose   = purpose
+    user.loginTokenConfirmed = false
+    await user.save()
+
+    console.log(`[login] new token for ${user.email}, purpose=${purpose}, token=${token.slice(0, 8)}...`)
+    const serverUrl = process.env.SERVER_URL || `${req.protocol}://${req.get('host')}`
+    await sendVerifyLinkEmail(user.email, user.name, token, purpose, serverUrl)
+    console.log(`[login] email sent to ${user.email}`)
+
     res.json({
-      message: 'Logged in!',
-      token,
-      user: { _id: user._id, name: user.name, email: user.email },
+      message:        purpose === 'login'
+        ? "We sent a link to your email to confirm it's you."
+        : 'Please verify your email first. We sent you a new verify link.',
+      verifyRequired: true,
+      purpose,
+      email:          user.email,
+      loginToken:     token,
     })
   } catch (err) {
     console.error('Login error:', err)
@@ -190,7 +287,116 @@ router.post('/login', async (req, res) => {
   }
 })
 
-// ── POST /api/auth/forgot-password ────────────────────────────────────────────
+// ── GET /api/auth/login-status/:token ────────────────────────────────────────
+// Polled by the app every few seconds while the user checks their email.
+router.get('/login-status/:token', async (req, res) => {
+  try {
+    const { deviceId } = req.query
+    const user = await User.findOne({ loginToken: req.params.token })
+
+    if (!user) {
+      console.log(`[login-status] no user for token ${req.params.token.slice(0, 8)}...`)
+      // FIX 3: return 410 (not 404) so the client treats this as terminal
+      // and shows an error instead of polling forever.
+      return res.status(410).json({ confirmed: false, message: 'Link expired. Please resend.' })
+    }
+
+    if (!user.loginTokenExpiry || user.loginTokenExpiry < new Date()) {
+      console.log(`[login-status] token expired for ${user.email}`)
+      return res.status(410).json({ confirmed: false, expired: true, message: 'Link expired. Please resend.' })
+    }
+
+    if (!user.loginTokenConfirmed) {
+      return res.json({ confirmed: false })
+    }
+
+    const purpose = user.loginTokenPurpose
+    if (purpose === 'register') user.isVerified = true
+    if (deviceId) user.deviceId = String(deviceId)
+    user.loginToken          = undefined
+    user.loginTokenExpiry    = undefined
+    user.loginTokenPurpose   = undefined
+    user.loginTokenConfirmed = false
+    await user.save()
+
+    console.log(`[login-status] confirmed for ${user.email}, issuing JWT`)
+    const jwtToken = signToken(user._id)
+    res.json({
+      confirmed: true,
+      token:     jwtToken,
+      user:      { _id: user._id, name: user.name, email: user.email },
+    })
+  } catch (err) {
+    console.error('Login status error:', err)
+    res.status(500).json({ message: 'Server error' })
+  }
+})
+
+// ── GET /api/auth/confirm-link/:token ────────────────────────────────────────
+// Opened by tapping the button in the email — runs in the phone's browser.
+router.get('/confirm-link/:token', async (req, res) => {
+  try {
+    const user = await User.findOne({ loginToken: req.params.token })
+    const fail = (text) => res.status(400).send(`
+      <html><body style="font-family:sans-serif;text-align:center;padding:40px;background:#0a0a0a;color:#f0f0f0">
+        <h1>${text}</h1><p>Please go back to the app and try again.</p>
+      </body></html>`)
+
+    if (!user) {
+      console.log(`[confirm-link] no user for token ${req.params.token.slice(0, 8)}...`)
+      return fail('Invalid or expired link')
+    }
+    if (!user.loginTokenExpiry || user.loginTokenExpiry < new Date()) {
+      console.log(`[confirm-link] token expired for ${user.email}`)
+      return fail('Link expired')
+    }
+
+    user.loginTokenConfirmed = true
+    await user.save()
+    console.log(`[confirm-link] confirmed for ${user.email}`)
+
+    res.send(`
+      <html><body style="font-family:sans-serif;text-align:center;padding:40px;background:#0a0a0a;color:#f0f0f0">
+        <h1 style="color:#ff4444">You're verified!</h1>
+        <p style="color:#aaa">Go back to the CrickyWorld app — it will log you in automatically.</p>
+      </body></html>`)
+  } catch (err) {
+    console.error('Confirm link error:', err)
+    res.status(500).send('Server error')
+  }
+})
+
+// ── POST /api/auth/resend-link ────────────────────────────────────────────────
+router.post('/resend-link', async (req, res) => {
+  try {
+    const { email, purpose } = req.body
+    if (!email || !purpose)
+      return res.status(400).json({ message: 'Email and purpose are required' })
+
+    const user = await User.findOne({ email: email.toLowerCase() })
+    if (!user)
+      return res.status(404).json({ message: 'No account found with this email' })
+    if (purpose === 'register' && user.isVerified)
+      return res.status(400).json({ message: 'Email already verified' })
+
+    const token = generateLoginToken()
+    user.loginToken          = token
+    user.loginTokenExpiry    = new Date(Date.now() + 10 * 60 * 1000)
+    user.loginTokenPurpose   = purpose
+    user.loginTokenConfirmed = false
+    await user.save()
+
+    console.log(`[resend-link] sending to ${user.email}, purpose=${purpose}`)
+    const serverUrl = process.env.SERVER_URL || `${req.protocol}://${req.get('host')}`
+    await sendVerifyLinkEmail(user.email, user.name, token, purpose, serverUrl)
+    res.json({ message: 'A new link has been sent to your email.', loginToken: token })
+  } catch (err) {
+    console.error('Resend link error:', err)
+    res.status(500).json({ message: 'Server error' })
+  }
+})
+
+// ── POST /api/auth/forgot-password ───────────────────────────────────────────
 router.post('/forgot-password', async (req, res) => {
   try {
     const { email } = req.body
@@ -204,7 +410,8 @@ router.post('/forgot-password', async (req, res) => {
     user.resetTokenExpiry = new Date(Date.now() + 60 * 60 * 1000)
     await user.save()
 
-    await sendResetEmail(email.toLowerCase(), user.name, resetToken)
+    const serverUrl = process.env.SERVER_URL || `${req.protocol}://${req.get('host')}`
+    await sendResetEmail(email.toLowerCase(), user.name, resetToken, serverUrl)
     res.json({ message: 'If this email exists, a reset link has been sent.' })
   } catch (err) {
     console.error('Forgot password error:', err)
@@ -216,7 +423,7 @@ router.post('/forgot-password', async (req, res) => {
 router.get('/reset-password/:token', async (req, res) => {
   try {
     const user = await User.findOne({
-      resetToken: req.params.token,
+      resetToken:       req.params.token,
       resetTokenExpiry: { $gt: new Date() },
     })
     if (!user) return res.status(400).send(`
@@ -260,18 +467,18 @@ router.get('/reset-password/:token', async (req, res) => {
             const p = document.getElementById('password').value
             const c = document.getElementById('confirm').value
             if (p.length < 6) { showMsg('Password must be at least 6 characters', false); return }
-            if (p !== c) { showMsg('Passwords do not match', false); return }
-            const res = await fetch(window.location.href, {
-              method: 'POST', headers: {'Content-Type':'application/json'},
+            if (p !== c)      { showMsg('Passwords do not match', false); return }
+            const res  = await fetch(window.location.href, {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ password: p })
             })
             const data = await res.json()
-            if (res.ok) { showMsg('Password reset! Open CrickyWorld app and sign in.', true) }
-            else { showMsg(data.message || 'Failed to reset password', false) }
+            if (res.ok) showMsg('Password reset! Open CrickyWorld app and sign in.', true)
+            else        showMsg(data.message || 'Failed to reset password', false)
           }
           function showMsg(text, success) {
             const m = document.getElementById('msg')
-            m.className = 'msg ' + (success ? 'success' : 'error')
+            m.className  = 'msg ' + (success ? 'success' : 'error')
             m.textContent = text
           }
         </script>
@@ -290,7 +497,7 @@ router.post('/reset-password/:token', async (req, res) => {
       return res.status(400).json({ message: 'Password must be at least 6 characters' })
 
     const user = await User.findOne({
-      resetToken: req.params.token,
+      resetToken:       req.params.token,
       resetTokenExpiry: { $gt: new Date() },
     }).select('+password')
     if (!user) return res.status(400).json({ message: 'Invalid or expired reset link' })
@@ -313,7 +520,8 @@ router.post('/device-login', async (req, res) => {
     const { deviceId } = req.body
     if (!deviceId) return res.status(400).json({ message: 'deviceId required' })
     const user = await User.findOne({ deviceId })
-    if (!user) return res.status(404).json({ message: 'Device not registered' })
+    if (!user)           return res.status(404).json({ message: 'Device not registered' })
+    if (!user.isVerified) return res.status(403).json({ message: 'Email not verified' })
     const token = signToken(user._id)
     res.json({ token, user: { _id: user._id, name: user.name, email: user.email } })
   } catch (err) {

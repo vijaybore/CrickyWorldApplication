@@ -12,11 +12,12 @@ interface AuthContextValue {
   loading:         boolean
   isGuest:         boolean
   deviceId:        string | null
-  loginWithEmail:  (email: string, password: string) => Promise<void>
-  register:        (name: string, email: string, password: string) => Promise<void>
+  loginWithEmail:  (email: string, password: string) => Promise<{ verifyRequired?: boolean; loginToken?: string }>
+  register:        (name: string, email: string, password: string) => Promise<{ verifyRequired?: boolean; loginToken?: string }>
   loginWithDevice: () => Promise<boolean>
   continueAsGuest: () => Promise<void>
   logout:          () => Promise<void>
+  completeVerification: (token: string, userProfile: User) => Promise<void>
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null)
@@ -87,17 +88,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     init()
   }, [])
 
-  // Logs in directly — server returns a JWT immediately on correct
-  // credentials, no email verify-link step.
-  const loginWithEmail = useCallback(async (email: string, password: string): Promise<void> => {
+  // Logs in directly or requests verify-link step if verification is enabled.
+  const loginWithEmail = useCallback(async (email: string, password: string): Promise<{ verifyRequired?: boolean; loginToken?: string }> => {
     const did = await getDeviceId()
     const res = await fetch(apiUrl('/api/auth/login'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email, password, deviceId: did }),
     })
-    const data = await res.json() as { token?: string; user?: User; message?: string }
+    const data = await res.json() as { token?: string; user?: User; verifyRequired?: boolean; loginToken?: string; message?: string }
     if (!res.ok) throw new Error(data.message ?? 'Login failed')
+    
+    if (data.verifyRequired) {
+      return { verifyRequired: true, loginToken: data.loginToken }
+    }
+
     if (!data.token || !data.user) throw new Error('Server response was missing login data. Please try again.')
 
     await AsyncStorage.setItem('token', data.token)
@@ -106,20 +111,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setIsGuest(false)
     setDeviceId(did)
     setUser(data.user)
+    return { verifyRequired: false }
   }, [])
 
-  // Creates the account and logs in directly — no email verify-link step.
-  // A welcome email is sent by the server in the background; it doesn't
-  // affect this flow either way.
-  const register = useCallback(async (name: string, email: string, password: string): Promise<void> => {
+  // Creates the account and requests verify-link step if verification is enabled.
+  const register = useCallback(async (name: string, email: string, password: string): Promise<{ verifyRequired?: boolean; loginToken?: string }> => {
     const did = await getDeviceId()
     const res = await fetch(apiUrl('/api/auth/register'), {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
       body:    JSON.stringify({ name, email, password, deviceId: did }),
     })
-    const data = await res.json() as { token?: string; user?: User; message?: string }
+    const data = await res.json() as { token?: string; user?: User; verifyRequired?: boolean; loginToken?: string; message?: string }
     if (!res.ok) throw new Error(data.message ?? 'Registration failed')
+
+    if (data.verifyRequired) {
+      return { verifyRequired: true, loginToken: data.loginToken }
+    }
+
     if (!data.token || !data.user) throw new Error('Server response was missing login data. Please try again.')
 
     await AsyncStorage.setItem('token', data.token)
@@ -128,6 +137,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setIsGuest(false)
     setDeviceId(did)
     setUser(data.user)
+    return { verifyRequired: false }
+  }, [])
+
+  const completeVerification = useCallback(async (token: string, userProfile: User): Promise<void> => {
+    const did = await getDeviceId()
+    await AsyncStorage.setItem('token', token)
+    await AsyncStorage.setItem('user',  JSON.stringify(userProfile))
+    await AsyncStorage.removeItem('isGuest')
+    setIsGuest(false)
+    setDeviceId(did)
+    setUser(userProfile)
   }, [])
 
   const loginWithDevice = useCallback(async (): Promise<boolean> => {
@@ -170,6 +190,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       user, loading, isGuest, deviceId,
       loginWithEmail, register,
       loginWithDevice, continueAsGuest, logout,
+      completeVerification,
     }}>
       {children}
     </AuthContext.Provider>

@@ -36,10 +36,14 @@ export default function LoginScreen() {
     submittingRef.current = true
     setLoading(true)
     try {
-      // Logs in directly — no email verify-link step. AuthContext's
-      // loginWithEmail sets the user/token itself; RootNavigator picks up
-      // the change automatically and swaps to AppStack.
-      await loginWithEmail(email.trim().toLowerCase(), password)
+      const res = await loginWithEmail(email.trim().toLowerCase(), password)
+      if (res && res.verifyRequired) {
+        navigation.navigate('WaitingForVerification', {
+          email: email.trim().toLowerCase(),
+          purpose: 'login',
+          loginToken: res.loginToken || '',
+        })
+      }
     } catch (e: unknown) {
       setError((e as Error).message ?? 'Login failed. Please try again.')
     } finally {
