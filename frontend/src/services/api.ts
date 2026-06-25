@@ -1,5 +1,5 @@
 // src/services/api.ts
-const BASE_URL = 'http://10.14.144.233:5000'
+const BASE_URL = 'https://crickyworldapplication.onrender.com'
 
 export function apiUrl(path: string) {
   return `${BASE_URL}${path}`
