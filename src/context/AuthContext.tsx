@@ -208,9 +208,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const continueAsGuest = useCallback(async () => {
     console.log('[AuthContext] continueAsGuest: clearing token/user...')
-    await AsyncStorage.multiRemove(['token', 'user'])
-    console.log('[AuthContext] continueAsGuest: setting isGuest flag...')
-    await AsyncStorage.setItem('isGuest', 'true')
+    try {
+      await AsyncStorage.multiRemove(['token', 'refreshToken', 'user'])
+      console.log('[AuthContext] continueAsGuest: setting isGuest flag...')
+      await AsyncStorage.setItem('isGuest', 'true')
+    } catch (storageErr) {
+      // Even if persisting to AsyncStorage fails, the user should still get
+      // into guest mode for this session — it just won't survive an app
+      // restart, which is a far better failure mode than being stuck on
+      // the login screen with no feedback.
+      console.log('[AuthContext] continueAsGuest: AsyncStorage write failed, continuing anyway:', storageErr)
+    }
     console.log('[AuthContext] continueAsGuest: calling setUser/setIsGuest...')
     setIsGuest(true)
     setUser({ id: 'guest', name: 'Guest' })

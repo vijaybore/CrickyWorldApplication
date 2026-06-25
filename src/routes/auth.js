@@ -1,27 +1,27 @@
 // crickyworld-server/routes/auth.js
-const express     = require('express')
-const router       = express.Router()
-const jwt          = require('jsonwebtoken')
-const bcrypt       = require('bcryptjs')
-const crypto       = require('crypto')
-const rateLimit    = require('express-rate-limit')
-const User         = require('../models/User')
+const express  = require('express')
+const router   = express.Router()
+const jwt      = require('jsonwebtoken')
+const bcrypt   = require('bcryptjs')
+const crypto   = require('crypto')
+const rateLimit = require('express-rate-limit')
+const User     = require('../models/User')
 
 const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token'
 const GMAIL_SEND_URL   = 'https://gmail.googleapis.com/gmail/v1/users/me/messages/send'
 
 // ── Rate limiters ──────────────────────────────────────────────────────────────
-// Applied per-route below. Keyed by IP; tune windowMs/max if you see false
-// positives from shared NAT (e.g. campus wifi, corporate proxies).
+// Keyed by IP. Tune windowMs/max if shared NAT (campus wifi, office proxy)
+// produces false positives for legitimate users.
 const loginLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 min
+  windowMs: 15 * 60 * 1000,
   max: 10,
   standardHeaders: true,
   legacyHeaders: false,
   message: { message: 'Too many login attempts. Please try again in a few minutes.' },
 })
 const registerLimiter = rateLimit({
-  windowMs: 60 * 60 * 1000, // 1 hour
+  windowMs: 60 * 60 * 1000,
   max: 8,
   standardHeaders: true,
   legacyHeaders: false,
@@ -77,6 +77,8 @@ function buildRawEmail({ from, to, subject, html }) {
 }
 
 async function sendMail(to, subject, html) {
+  const errors = []
+
   // Try Resend if configured
   if (process.env.RESEND_API_KEY) {
     try {
@@ -84,15 +86,33 @@ async function sendMail(to, subject, html) {
       const { Resend } = require('resend')
       const resend = new Resend(process.env.RESEND_API_KEY)
       const fromEmail = process.env.FROM_EMAIL || 'onboarding@resend.dev'
-      const data = await resend.emails.send({
+      const { data, error } = await resend.emails.send({
         from: `CrickyWorld <${fromEmail}>`,
         to,
         subject,
         html,
       })
+      if (error) {
+        // Resend's SDK returns errors in `error`, not always as a thrown
+        // exception. The most common one on a free/unverified account:
+        // onboarding@resend.dev can only send to the Resend account's own
+        // email — every other recipient gets rejected here.
+        const isSandboxRestriction = fromEmail === 'onboarding@resend.dev'
+          && /own email|verified domain|recipients other than/i.test(error.message || '')
+        if (isSandboxRestriction) {
+          console.error(
+            `Resend rejected ${to}: sending from onboarding@resend.dev only works for the email address tied to your Resend account. ` +
+            `Verify a domain at resend.com/domains and set FROM_EMAIL to an address on it, or rely on the Gmail fallback below.`
+          )
+        } else {
+          console.error('Resend returned an error:', JSON.stringify(error))
+        }
+        throw new Error(error.message || 'Resend send failed')
+      }
       console.log(`Email sent via Resend to ${to}: ${subject}`, data)
       return
     } catch (err) {
+      errors.push(`Resend: ${err.message}`)
       console.error('Failed to send email via Resend, falling back...', err.message)
     }
   }
@@ -118,6 +138,7 @@ async function sendMail(to, subject, html) {
       console.log(`Email sent via Nodemailer SMTP to ${to}: ${subject}`)
       return
     } catch (err) {
+      errors.push(`Nodemailer SMTP: ${err.message}`)
       console.error('Failed to send email via Nodemailer SMTP, falling back...', err.message)
     }
   }
@@ -139,15 +160,19 @@ async function sendMail(to, subject, html) {
     }
     console.log(`Email sent via Gmail API OAuth to ${to}: ${subject}`)
   } catch (err) {
+    errors.push(`Gmail API OAuth: ${err.message}`)
     console.error(`Failed to send email to ${to}:`, err.message)
-    throw err
+    // All providers exhausted — surface every attempt's failure reason so
+    // logs show exactly why, instead of just the last one.
+    throw new Error(`All email providers failed for ${to}. ${errors.join(' | ')}`)
   }
 }
 
-function signAccessToken(userId) {
-  // Short-lived access token. The app should silently refresh this using
-  // the refresh token rather than relying on a long expiry.
-  return jwt.sign({ id: userId }, process.env.JWT_SECRET, { expiresIn: '15m' })
+function signToken(userId) {
+  // Kept at 90d for backward compatibility with any already-issued tokens,
+  // but new logins should prefer the short-lived access + refresh pair via
+  // issueTokenPair() below.
+  return jwt.sign({ id: userId }, process.env.JWT_SECRET, { expiresIn: '90d' })
 }
 
 function generateRefreshToken() {
@@ -158,11 +183,11 @@ function hashRefreshToken(token) {
   return crypto.createHash('sha256').update(token).digest('hex')
 }
 
-// Issues a fresh access + refresh token pair for a user and persists the
-// hashed refresh token. Call this anywhere a user completes login
-// (confirm-link polling success, device-login).
+// Issues an access token + refresh token pair and persists the hashed
+// refresh token. The frontend stores both and uses the refresh token to
+// silently re-mint access tokens via POST /refresh-token.
 async function issueTokenPair(user) {
-  const accessToken  = signAccessToken(user._id)
+  const accessToken  = signToken(user._id)
   const refreshToken = generateRefreshToken()
   user.refreshTokenHash   = hashRefreshToken(refreshToken)
   user.refreshTokenExpiry = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000) // 30 days
@@ -259,10 +284,25 @@ router.post('/register', registerLimiter, async (req, res) => {
 
     console.log(`New user registered: ${user.email}, sending verify link...`)
     const serverUrl = process.env.SERVER_URL || `${req.protocol}://${req.get('host')}`
-    await sendVerifyLinkEmail(user.email, user.name, token, 'register', serverUrl)
+
+    // The account is already created at this point. If the verify email
+    // fails to send (provider outage, bad credentials, etc.) we must NOT
+    // return 500 — that tells the client "nothing happened" when in fact
+    // the user now exists, so retrying would just hit the 409 duplicate
+    // check above. Instead, report success and let "Resend Email Link" on
+    // the waiting screen retry the send.
+    let emailSent = true
+    try {
+      await sendVerifyLinkEmail(user.email, user.name, token, 'register', serverUrl)
+    } catch (emailErr) {
+      emailSent = false
+      console.error(`[register] account created for ${user.email} but verify email failed to send:`, emailErr.message)
+    }
 
     res.status(201).json({
-      message:        'Account created! Check your email and tap the verify link to activate it.',
+      message:        emailSent
+        ? 'Account created! Check your email and tap the verify link to activate it.'
+        : 'Account created! We had trouble sending the verification email — tap "Resend Email Link" to try again.',
       verifyRequired: true,
       purpose:        'register',
       email:          user.email,
@@ -324,13 +364,22 @@ router.post('/login', loginLimiter, async (req, res) => {
 
     console.log(`[login] new token for ${user.email}, purpose=${purpose}, token=${token.slice(0, 8)}...`)
     const serverUrl = process.env.SERVER_URL || `${req.protocol}://${req.get('host')}`
-    await sendVerifyLinkEmail(user.email, user.name, token, purpose, serverUrl)
-    console.log(`[login] email sent to ${user.email}`)
+
+    let emailSent = true
+    try {
+      await sendVerifyLinkEmail(user.email, user.name, token, purpose, serverUrl)
+      console.log(`[login] email sent to ${user.email}`)
+    } catch (emailErr) {
+      emailSent = false
+      console.error(`[login] token saved for ${user.email} but verify email failed to send:`, emailErr.message)
+    }
 
     res.json({
-      message:        purpose === 'login'
-        ? "We sent a link to your email to confirm it's you."
-        : 'Please verify your email first. We sent you a new verify link.',
+      message:        emailSent
+        ? (purpose === 'login'
+            ? "We sent a link to your email to confirm it's you."
+            : 'Please verify your email first. We sent you a new verify link.')
+        : 'We had trouble sending the email — tap "Resend Email Link" to try again.',
       verifyRequired: true,
       purpose,
       email:          user.email,
@@ -444,8 +493,21 @@ router.post('/resend-link', resendLinkLimiter, async (req, res) => {
 
     console.log(`[resend-link] sending to ${user.email}, purpose=${purpose}`)
     const serverUrl = process.env.SERVER_URL || `${req.protocol}://${req.get('host')}`
-    await sendVerifyLinkEmail(user.email, user.name, token, purpose, serverUrl)
-    res.json({ message: 'A new link has been sent to your email.', loginToken: token })
+
+    let emailSent = true
+    try {
+      await sendVerifyLinkEmail(user.email, user.name, token, purpose, serverUrl)
+    } catch (emailErr) {
+      emailSent = false
+      console.error(`[resend-link] token saved for ${user.email} but email failed to send:`, emailErr.message)
+    }
+
+    res.json({
+      message: emailSent
+        ? 'A new link has been sent to your email.'
+        : 'We had trouble sending the email. Please try again in a moment.',
+      loginToken: token,
+    })
   } catch (err) {
     console.error('Resend link error:', err)
     res.status(500).json({ message: 'Server error' })
@@ -467,7 +529,18 @@ router.post('/forgot-password', forgotPasswordLimiter, async (req, res) => {
     await user.save()
 
     const serverUrl = process.env.SERVER_URL || `${req.protocol}://${req.get('host')}`
-    await sendResetEmail(email.toLowerCase(), user.name, resetToken, serverUrl)
+
+    // The reset token is already saved at this point — a failed email send
+    // shouldn't surface as a 500 (which reads as "something is broken")
+    // when the real, user-actionable problem is just delivery. We still
+    // return the generic message either way so this endpoint can't be used
+    // to enumerate which emails have accounts.
+    try {
+      await sendResetEmail(email.toLowerCase(), user.name, resetToken, serverUrl)
+    } catch (emailErr) {
+      console.error(`[forgot-password] reset token saved for ${user.email} but email failed to send:`, emailErr.message)
+    }
+
     res.json({ message: 'If this email exists, a reset link has been sent.' })
   } catch (err) {
     console.error('Forgot password error:', err)
@@ -601,8 +674,7 @@ router.get('/me', async (req, res) => {
 })
 
 // ── POST /api/auth/refresh-token ─────────────────────────────────────────────
-// Exchanges a valid refresh token for a new short-lived access token.
-// Call this when /api/auth/me returns 401 due to access token expiry.
+// Exchanges a valid refresh token for a new access token.
 router.post('/refresh-token', async (req, res) => {
   try {
     const { refreshToken } = req.body
@@ -616,7 +688,7 @@ router.post('/refresh-token', async (req, res) => {
       return res.status(401).json({ message: 'Refresh token expired. Please log in again.' })
     }
 
-    const accessToken = signAccessToken(user._id)
+    const accessToken = signToken(user._id)
     res.json({ token: accessToken, user: { _id: user._id, name: user.name, email: user.email } })
   } catch (err) {
     console.error('Refresh token error:', err)
@@ -626,7 +698,6 @@ router.post('/refresh-token', async (req, res) => {
 
 // ── POST /api/auth/logout ────────────────────────────────────────────────────
 // Revokes the refresh token server-side so it can't be replayed after logout.
-// The client still clears its own local storage separately.
 router.post('/logout', async (req, res) => {
   try {
     const { refreshToken } = req.body
@@ -640,8 +711,7 @@ router.post('/logout', async (req, res) => {
     res.json({ message: 'Logged out successfully' })
   } catch (err) {
     console.error('Logout error:', err)
-    // Logout should never block the client from clearing local state, so
-    // we still return 200 here even on a server-side hiccup.
+    // Logout should never block the client from clearing local state.
     res.json({ message: 'Logged out' })
   }
 })

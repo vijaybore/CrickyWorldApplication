@@ -59,8 +59,34 @@ export default function WaitingForVerificationScreen() {
         if (data.confirmed && data.token && data.user) {
           if (timerId) clearInterval(timerId)
           setSuccessMsg('Email verified! Redirecting...')
-          // Log user in and switch navigation stack
+          // Log user in (flips `user` in AuthContext — what RootNavigator
+          // uses to decide AuthStack vs AppStack).
           await completeVerification(data.token, data.user, data.refreshToken)
+
+          // IMPORTANT: when this screen was reached from a Guest session
+          // (Home -> "Sign In" -> this modal, all inside AppStack), `user`
+          // was already truthy before completeVerification ran — it just
+          // changes from the guest placeholder to the real account.
+          // RootNavigator's `user ? <AppStack/> : <AuthStack/>` check sees
+          // no falsy->truthy transition in that case, so it never remounts
+          // the stack, and this screen was left sitting on top forever
+          // showing "Redirecting...". Pop back to Home explicitly so both
+          // the logged-out and guest-upgrade paths land in the same place.
+          //
+          // When coming from the logged-out AuthStack, completeVerification
+          // just flipped user null -> truthy, so RootNavigator may already
+          // be swapping this whole navigator for AppStack in the same
+          // render pass. Calling reset/popToTop on a navigator that's mid
+          // unmount can throw, so this is wrapped defensively.
+          try {
+            if (navigation.canGoBack()) {
+              navigation.popToTop()
+            } else {
+              navigation.reset({ index: 0, routes: [{ name: 'Home' }] })
+            }
+          } catch (navErr) {
+            console.log('[Polling] navigation reset skipped (stack likely already swapping):', navErr)
+          }
         }
       } catch (err: unknown) {
         console.error('[Polling] Error:', err)

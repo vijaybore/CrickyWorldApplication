@@ -21,7 +21,9 @@ const userSchema = new mongoose.Schema({
   resetTokenExpiry:  { type: Date },
 
   // Refresh token for short-lived access tokens. Stored hashed so a DB leak
-  // doesn't hand out reusable long-lived credentials directly.
+  // doesn't hand out reusable long-lived credentials directly. The frontend
+  // (AuthContext.tsx) already calls /refresh-token and /logout expecting
+  // these to exist.
   refreshTokenHash:   { type: String, select: false },
   refreshTokenExpiry: { type: Date },
 }, { timestamps: true })

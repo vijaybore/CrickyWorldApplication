@@ -107,6 +107,8 @@ function AppStack() {
         options={{ animation: 'slide_from_bottom', presentation: 'modal' }} />
       <Stack.Screen name="Register"      component={RegisterScreen}
         options={{ animation: 'slide_from_bottom', presentation: 'modal' }} />
+      <Stack.Screen name="ForgotPassword" component={ForgotPasswordScreen}
+        options={{ animation: 'slide_from_bottom', presentation: 'modal' }} />
       <Stack.Screen name="WaitingForVerification" component={WaitingForVerificationScreen}
         options={{ animation: 'slide_from_bottom', presentation: 'modal' }} />
     </Stack.Navigator>
