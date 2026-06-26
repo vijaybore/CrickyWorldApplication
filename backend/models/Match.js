@@ -50,9 +50,10 @@ const matchSchema = new mongoose.Schema({
   createdBy: {
     type:     mongoose.Schema.Types.ObjectId,
     ref:      'User',
-    required: true,
+    required: false,
     index:    true,
   },
+  deviceId: { type: String, default: null, index: true },
   team1:         { type: String, required: true, trim: true },
   team2:         { type: String, required: true, trim: true },
   team1Players:  [{ type: String }],
