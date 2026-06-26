@@ -65,7 +65,7 @@ const matchSchema = new mongoose.Schema({
   result:        { type: String, default: '' },
   isLive:        { type: Boolean, default: false },
   isCompleted:   { type: Boolean, default: false },
-  tournamentId:   { type: mongoose.Schema.Types.ObjectId, ref: 'Tournament', default: null },
+  tournamentId:   { type: String, default: null },
   tournamentName: { type: String, default: null },
   innings1: { type: inningsSchema, default: () => ({}) },
   innings2: { type: inningsSchema, default: () => ({}) },
