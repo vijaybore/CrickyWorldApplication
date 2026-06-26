@@ -79,34 +79,34 @@ function buildRawEmail({ from, to, subject, html }) {
 async function sendMail(to, subject, html) {
   const errors = []
 
-  // Try Brevo SMTP if configured
-  if (process.env.BREVO_API_KEY) {
-    try {
-      console.log('Attempting to send email via Brevo SMTP...')
-      const nodemailer = require('nodemailer')
-      const transporter = nodemailer.createTransport({
-        host: 'smtp-relay.brevo.com',
-        port: 587,
-        auth: {
-          user: process.env.MAIL_FROM_EMAIL || 'vijaybore05@gmail.com',
-          pass: process.env.BREVO_API_KEY,
-        },
-      })
-      const fromName = process.env.MAIL_FROM_NAME || 'CrickyWorld'
-      const fromEmail = process.env.MAIL_FROM_EMAIL || 'vijaybore05@gmail.com'
-      await transporter.sendMail({
-        from: `"${fromName}" <${fromEmail}>`,
-        to,
+ // Try Brevo HTTP API if configured
+if (process.env.BREVO_API_KEY) {
+  try {
+    console.log('Attempting to send email via Brevo HTTP API...')
+    const fromEmail = process.env.MAIL_FROM_EMAIL || 'vijaybore05@gmail.com'
+    const fromName  = process.env.MAIL_FROM_NAME  || 'CrickyWorld'
+    const resp = await fetch('https://api.brevo.com/v3/smtp/email', {
+      method: 'POST',
+      headers: {
+        'api-key': process.env.BREVO_API_KEY,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        sender:   { name: fromName, email: fromEmail },
+        to:       [{ email: to }],
         subject,
-        html,
-      })
-      console.log(`Email sent via Brevo SMTP to ${to}: ${subject}`)
-      return
-    } catch (err) {
-      errors.push(`Brevo SMTP: ${err.message}`)
-      console.error('Failed to send email via Brevo SMTP, falling back...', err.message)
-    }
+        htmlContent: html,
+      }),
+    })
+    const result = await resp.json()
+    if (!resp.ok) throw new Error(result.message || 'Brevo API error')
+    console.log(`Email sent via Brevo HTTP API to ${to}`)
+    return
+  } catch (err) {
+    errors.push(`Brevo HTTP API: ${err.message}`)
+    console.error('Failed to send email via Brevo HTTP API, falling back...', err.message)
   }
+}
 
   // Try Resend if configured
   if (process.env.RESEND_API_KEY) {
