@@ -55,7 +55,7 @@ mongoose.connect(process.env.MONGO_URI || process.env.MONGODB_URI)
       // next request to wait 50+ seconds to wake up — long enough for an OTP
       // to expire before verify-otp even runs. Pinging every 14 min keeps the
       // instance awake so OTP verification always succeeds instantly.
-      const SERVER_URL = process.env.SERVER_URL || 'https://crickyworld-appserver.onrender.com'
+      const SERVER_URL = process.env.SERVER_URL || 'https://crickyworldapplication.onrender.com'
       setInterval(() => {
         fetch(`${SERVER_URL}/`)
           .then(() => console.log('✅ Keep-alive ping sent'))

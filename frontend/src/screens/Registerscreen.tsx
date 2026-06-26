@@ -1,5 +1,5 @@
 // src/screens/Registerscreen.tsx
-import React, { useState, useRef } from 'react'
+import React, { useState, useRef, useEffect } from 'react'
 import {
   View, Text, TextInput, Pressable, ScrollView,
   StyleSheet, ActivityIndicator, KeyboardAvoidingView, Platform, StatusBar,
@@ -8,6 +8,7 @@ import { useNavigation } from '@react-navigation/native'
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack'
 import { useAuth } from '../context/AuthContext'
 import type { RootStackParamList } from '../types'
+import { apiUrl } from '../services/api'
 
 type Nav = NativeStackNavigationProp<RootStackParamList>
 
@@ -29,6 +30,11 @@ export default function RegisterScreen() {
   // re-renders, sending two /register calls that would each mint a different
   // verify-link token.
   const submittingRef = useRef(false)
+
+  useEffect(() => {
+    // Wake up Render server proactively so it's ready when they submit
+    fetch(apiUrl('/api/auth/me')).catch(() => {})
+  }, [])
 
   const handleRegister = async () => {
     if (submittingRef.current) return
