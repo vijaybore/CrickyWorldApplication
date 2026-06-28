@@ -76,37 +76,45 @@ function buildRawEmail({ from, to, subject, html }) {
   return Buffer.from(message).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
 }
 
+// Helper: fetch with a timeout (default 3 s) so slow/failing providers don't hang
+function fetchWithTimeout(url, options, timeoutMs = 3000) {
+  const ctrl = new AbortController()
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs)
+  return fetch(url, { ...options, signal: ctrl.signal })
+    .finally(() => clearTimeout(timer))
+}
+
 async function sendMail(to, subject, html) {
   const errors = []
 
- // Try Brevo HTTP API if configured
-if (process.env.BREVO_API_KEY) {
-  try {
-    console.log('Attempting to send email via Brevo HTTP API...')
-    const fromEmail = process.env.MAIL_FROM_EMAIL || 'vijaybore05@gmail.com'
-    const fromName  = process.env.MAIL_FROM_NAME  || 'CrickyWorld'
-    const resp = await fetch('https://api.brevo.com/v3/smtp/email', {
-      method: 'POST',
-      headers: {
-        'api-key': process.env.BREVO_API_KEY,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        sender:   { name: fromName, email: fromEmail },
-        to:       [{ email: to }],
-        subject,
-        htmlContent: html,
-      }),
-    })
-    const result = await resp.json()
-    if (!resp.ok) throw new Error(result.message || 'Brevo API error')
-    console.log(`Email sent via Brevo HTTP API to ${to}`)
-    return
-  } catch (err) {
-    errors.push(`Brevo HTTP API: ${err.message}`)
-    console.error('Failed to send email via Brevo HTTP API, falling back...', err.message)
+  // Try Brevo HTTP API if configured
+  if (process.env.BREVO_API_KEY) {
+    try {
+      console.log('Attempting to send email via Brevo HTTP API...')
+      const fromEmail = process.env.MAIL_FROM_EMAIL || 'vijaybore05@gmail.com'
+      const fromName  = process.env.MAIL_FROM_NAME  || 'CrickyWorld'
+      const resp = await fetchWithTimeout('https://api.brevo.com/v3/smtp/email', {
+        method: 'POST',
+        headers: {
+          'api-key': process.env.BREVO_API_KEY,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          sender:      { name: fromName, email: fromEmail },
+          to:          [{ email: to }],
+          subject,
+          htmlContent: html,
+        }),
+      })
+      const result = await resp.json()
+      if (!resp.ok) throw new Error(result.message || 'Brevo API error')
+      console.log(`Email sent via Brevo HTTP API to ${to}`)
+      return
+    } catch (err) {
+      errors.push(`Brevo HTTP API: ${err.message}`)
+      console.error('Failed to send email via Brevo HTTP API, falling back...', err.message)
+    }
   }
-}
 
   // Try Resend if configured
   if (process.env.RESEND_API_KEY) {
@@ -115,23 +123,25 @@ if (process.env.BREVO_API_KEY) {
       const { Resend } = require('resend')
       const resend = new Resend(process.env.RESEND_API_KEY)
       const fromEmail = process.env.FROM_EMAIL || 'onboarding@resend.dev'
-      const { data, error } = await resend.emails.send({
+      // Resend SDK does not expose a signal option, but it uses node-fetch
+      // internally which respects AbortSignal via a race:
+      const sendPromise = resend.emails.send({
         from: `CrickyWorld <${fromEmail}>`,
         to,
         subject,
         html,
       })
+      const timeoutPromise = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('Resend timed out after 3 s')), 3000)
+      )
+      const { data, error } = await Promise.race([sendPromise, timeoutPromise])
       if (error) {
-        // Resend's SDK returns errors in `error`, not always as a thrown
-        // exception. The most common one on a free/unverified account:
-        // onboarding@resend.dev can only send to the Resend account's own
-        // email — every other recipient gets rejected here.
         const isSandboxRestriction = fromEmail === 'onboarding@resend.dev'
           && /own email|verified domain|recipients other than/i.test(error.message || '')
         if (isSandboxRestriction) {
           console.error(
-            `Resend rejected ${to}: sending from onboarding@resend.dev only works for the email address tied to your Resend account. ` +
-            `Verify a domain at resend.com/domains and set FROM_EMAIL to an address on it, or rely on the Gmail fallback below.`
+            `Resend rejected ${to}: sending from onboarding@resend.dev only works for the email ` +
+            `address tied to your Resend account. Verify a domain at resend.com/domains.`
           )
         } else {
           console.error('Resend returned an error:', JSON.stringify(error))
@@ -153,16 +163,14 @@ if (process.env.BREVO_API_KEY) {
       const nodemailer = require('nodemailer')
       const transporter = nodemailer.createTransport({
         service: 'gmail',
-        auth: {
-          user: process.env.GMAIL_USER,
-          pass: process.env.GMAIL_PASS,
-        },
+        connectionTimeout: 5000,
+        greetingTimeout: 5000,
+        socketTimeout: 5000,
+        auth: { user: process.env.GMAIL_USER, pass: process.env.GMAIL_PASS },
       })
       await transporter.sendMail({
         from: `"CrickyWorld" <${process.env.GMAIL_USER}>`,
-        to,
-        subject,
-        html,
+        to, subject, html,
       })
       console.log(`Email sent via Nodemailer SMTP to ${to}: ${subject}`)
       return
@@ -172,12 +180,12 @@ if (process.env.BREVO_API_KEY) {
     }
   }
 
-  // Fallback to Google OAuth/Gmail API
+  // Fallback to Google OAuth / Gmail API
   try {
     console.log('Attempting to send email via Gmail API OAuth...')
     const accessToken = await getAccessToken()
     const raw = buildRawEmail({ from: process.env.GMAIL_USER, to, subject, html })
-    const res = await fetch(GMAIL_SEND_URL, {
+    const res = await fetchWithTimeout(GMAIL_SEND_URL, {
       method: 'POST',
       headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ raw }),
@@ -191,8 +199,6 @@ if (process.env.BREVO_API_KEY) {
   } catch (err) {
     errors.push(`Gmail API OAuth: ${err.message}`)
     console.error(`Failed to send email to ${to}:`, err.message)
-    // All providers exhausted — surface every attempt's failure reason so
-    // logs show exactly why, instead of just the last one.
     throw new Error(`All email providers failed for ${to}. ${errors.join(' | ')}`)
   }
 }
@@ -314,7 +320,7 @@ router.post('/register', registerLimiter, async (req, res) => {
       await User.updateMany({ deviceId }, { $unset: { deviceId: 1 } })
     }
 
-    const hash  = await bcrypt.hash(password, 12)
+    const hash  = await bcrypt.hash(password, 10)
     const token = generateLoginToken()
     const otp   = generateOTP()
 
@@ -340,18 +346,12 @@ router.post('/register', registerLimiter, async (req, res) => {
     // the user now exists, so retrying would just hit the 409 duplicate
     // check above. Instead, report success and let "Resend Email Link" on
     // the waiting screen retry the send.
-    let emailSent = true
-    try {
-      await sendVerifyLinkEmail(user.email, user.name, token, otp, 'register', serverUrl)
-    } catch (emailErr) {
-      emailSent = false
+    sendVerifyLinkEmail(user.email, user.name, token, otp, 'register', serverUrl).catch(emailErr => {
       console.error(`[register] account created for ${user.email} but verify email failed to send:`, emailErr.message)
-    }
+    })
 
     res.status(201).json({
-      message:        emailSent
-        ? 'Account created! Check your email and enter the OTP or tap the verify link to activate it.'
-        : 'Account created! We had trouble sending the verification email — tap "Resend Email Link" to try again.',
+      message: 'Account created! Check your email and enter the OTP or tap the verify link to activate it.',
       verifyRequired: true,
       purpose:        'register',
       email:          user.email,
@@ -439,19 +439,12 @@ router.post('/login', loginLimiter, async (req, res) => {
     console.log(`[login] new token for ${user.email}, purpose=${purpose}, token=${token.slice(0, 8)}..., OTP=${otp}`)
     const serverUrl = process.env.SERVER_URL || `${req.protocol}://${req.get('host')}`
 
-    let emailSent = true
-    try {
-      await sendVerifyLinkEmail(user.email, user.name, token, otp, purpose, serverUrl)
-      console.log(`[login] email sent to ${user.email}`)
-    } catch (emailErr) {
-      emailSent = false
-      console.error(`[login] token saved for ${user.email} but verify email failed to send:`, emailErr.message)
-    }
+    sendVerifyLinkEmail(user.email, user.name, token, otp, purpose, serverUrl)
+      .then(() => console.log(`[login] email sent to ${user.email}`))
+      .catch(emailErr => console.error(`[login] token saved for ${user.email} but verify email failed to send:`, emailErr.message))
 
     res.json({
-      message:        emailSent
-        ? 'Please verify your email first. We sent you a new verify link/OTP.'
-        : 'We had trouble sending the email — tap "Resend Email Link" to try again.',
+      message: 'Please verify your email first. We sent you a new verify link/OTP.',
       verifyRequired: true,
       purpose,
       email:          user.email,
@@ -620,18 +613,12 @@ router.post('/resend-link', resendLinkLimiter, async (req, res) => {
     console.log(`[resend-link] sending to ${user.email}, purpose=${purpose}, OTP=${otp}`)
     const serverUrl = process.env.SERVER_URL || `${req.protocol}://${req.get('host')}`
 
-    let emailSent = true
-    try {
-      await sendVerifyLinkEmail(user.email, user.name, token, otp, purpose, serverUrl)
-    } catch (emailErr) {
-      emailSent = false
+    sendVerifyLinkEmail(user.email, user.name, token, otp, purpose, serverUrl).catch(emailErr => {
       console.error(`[resend-link] token saved for ${user.email} but email failed to send:`, emailErr.message)
-    }
+    })
 
     res.json({
-      message: emailSent
-        ? 'A new OTP and link has been sent to your email.'
-        : 'We had trouble sending the email. Please try again in a moment.',
+      message: 'A new OTP and link has been sent to your email.',
       loginToken: token,
     })
   } catch (err) {
@@ -661,11 +648,9 @@ router.post('/forgot-password', forgotPasswordLimiter, async (req, res) => {
     // when the real, user-actionable problem is just delivery. We still
     // return the generic message either way so this endpoint can't be used
     // to enumerate which emails have accounts.
-    try {
-      await sendResetEmail(email.toLowerCase(), user.name, resetToken, serverUrl)
-    } catch (emailErr) {
+    sendResetEmail(email.toLowerCase(), user.name, resetToken, serverUrl).catch(emailErr => {
       console.error(`[forgot-password] reset token saved for ${user.email} but email failed to send:`, emailErr.message)
-    }
+    })
 
     res.json({ message: 'If this email exists, a reset link has been sent.' })
   } catch (err) {
@@ -757,7 +742,7 @@ router.post('/reset-password/:token', async (req, res) => {
     }).select('+password')
     if (!user) return res.status(400).json({ message: 'Invalid or expired reset link' })
 
-    user.password         = await bcrypt.hash(password, 12)
+    user.password         = await bcrypt.hash(password, 10)
     user.resetToken       = undefined
     user.resetTokenExpiry = undefined
     await user.save()

@@ -29,8 +29,9 @@ export default function WaitingForVerificationScreen() {
   const [verifyingOtp, setVerifyingOtp] = useState(false)
   const [otpError, setOtpError] = useState('')
 
-  const handleVerifyOtp = async () => {
-    if (otp.length < 6) {
+  const handleVerifyOtp = async (otpOverride?: string) => {
+    const otpValue = otpOverride ?? otp
+    if (otpValue.length < 6) {
       setOtpError('Please enter a 6-digit OTP code')
       return
     }
@@ -40,7 +41,7 @@ export default function WaitingForVerificationScreen() {
       const res = await fetch(apiUrl('/api/auth/verify-otp'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, otp, deviceId }),
+        body: JSON.stringify({ email, otp: otpValue, deviceId }),
       })
       const data = await res.json() as { confirmed?: boolean; token?: string; refreshToken?: string; user?: any; message?: string }
       if (!res.ok) {
@@ -138,9 +139,9 @@ export default function WaitingForVerificationScreen() {
       }
     }
 
-    // Run initial check and set interval
+    // Run initial check and set interval (poll every 2 s for faster confirmation)
     checkStatus()
-    timerId = setInterval(checkStatus, 3000)
+    timerId = setInterval(checkStatus, 2000)
 
     return () => {
       active = false
@@ -208,6 +209,8 @@ export default function WaitingForVerificationScreen() {
                   setOtp(cleaned)
                   if (cleaned.length === 6) {
                     setOtpError('')
+                    // Auto-submit as soon as the 6th digit is entered
+                    handleVerifyOtp(cleaned)
                   }
                 }}
                 placeholder="000000"
@@ -221,7 +224,7 @@ export default function WaitingForVerificationScreen() {
               )}
               <Pressable
                 android_ripple={{ color: 'rgba(255,255,255,0.12)' }}
-                onPress={handleVerifyOtp}
+                onPress={() => handleVerifyOtp()}
                 disabled={verifyingOtp}
                 style={[S.verifyBtn, verifyingOtp && S.verifyBtnDim]}
               >
